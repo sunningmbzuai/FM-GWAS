@@ -1,0 +1,3 @@
+gene_id	num_feature	embed_type	F_obs	p_F_analytic
+ENSG00000108651.5	50	concat_tss_rnaseq_atac_pca50	2.2163552274919858	2.0588086524498204e-06
+ENSG00000117399.9	5	add_tss_cage_atac_pca5	6.803652071764738	2.478044471490164e-06

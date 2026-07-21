@@ -1,0 +1,2 @@
+gene_id	num_feature	embed_type	F_obs	p_F_analytic
+ENSG00000187860.6	50	concat_dnase_pca50	2.360029947691807	2.994628124211435e-07
