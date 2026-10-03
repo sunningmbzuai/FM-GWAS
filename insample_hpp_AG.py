@@ -277,13 +277,17 @@ if __name__ == '__main__':
         # load features
         data = load_features(win_paths, df_phenotype, sex=args.sex)
 
-        Z = data['covariants']
+        Z = np.asarray(data['covariants'], dtype=np.float64)
         labels = data['labels']
-        # association test
-        pca = PCA(n_components=0.99, svd_solver='full', whiten=True)
-        Z_pca = pca.fit_transform(Z)
-        # >> Ning: fix sign
-        Z_pca = fix_signs(Z_pca)
+        # Covariates enter OLS directly (no PCA). Previously PCA(0.99) on raw [age, sex]
+        # kept only PC1 (~age, since var(age) >> var(sex)), silently dropping sex for sex=All.
+        expected_cov = ['age', 'sex'] if args.sex.upper() == 'ALL' else ['age']
+        if Z.ndim != 2 or Z.shape[1] != len(expected_cov):
+            raise ValueError(f'Expected covariates {expected_cov}, got shape {Z.shape}')
+        cov_std = Z.std(axis=0)
+        if np.any(cov_std == 0):
+            raise ValueError(f'Constant covariate(s) {[c for c, s in zip(expected_cov, cov_std) if s == 0]} '
+                             f'for sex={args.sex}')
         save_dict = {'gene_id': [], 'num_feature': [], 'embed_type': [], 'F_obs': [], 'p_F_analytic': []}
 
         if not is_binary:  # Use Linear regression
@@ -300,7 +304,8 @@ if __name__ == '__main__':
             # for feat_type in ['concat', 'add']:
                 embed_types.append(f'{feat_type}_{track_type}')
         for embed_type in embed_types:
-            pca_component_list = [5] if 'add' in embed_type else [50]
+            # Gene PCA: keep 95% variance, whitened, sklearn 'auto' solver (same config for all embed types)
+            pca_component_list = [0.95]
             for pca_component in pca_component_list:
                 if embed_type in data.keys():
                     X = data[embed_type]
@@ -324,17 +329,19 @@ if __name__ == '__main__':
                     break
                 # gene embedding PCA
                 X = normalization(X.astype(np.float32))
-                if X.shape[-1] < pca_component:
+                if X.shape[-1] == 0:
+                    print(f'{embed_type}: all features constant, skip')
                     break
-                pca_final = PCA(n_components=pca_component, whiten=True)
+                pca_final = PCA(n_components=pca_component, whiten=True, svd_solver='auto')
                 try:
                     X = pca_final.fit_transform(X)
-                except:
+                except Exception as e:
+                    print(f'{gene_id} {embed_type}: PCA failed ({e}), skip')
                     continue
                 # fix sign to ensure determistic
                 X = fix_signs(X)
                 # save pval
-                ret = LinearRegression_Ftest(X, Z_pca, Y)
+                ret = LinearRegression_Ftest(X, Z, Y)
                 # print(embed_type+f'_pca{pca_component}', ret['p_F_analytic'])
                 save_dict['gene_id'].append(gene_id)
                 save_dict['num_feature'].append(X.shape[-1])
