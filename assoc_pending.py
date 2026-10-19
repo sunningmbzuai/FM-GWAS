@@ -5,12 +5,16 @@ gene whose file exists, so a rerun only does what is left. run_assoc.sh uses
 the pending count to decide how many ranks (--rank/--world_size, the script's
 own split) a cell gets.
 
-One case needs help. A gene with no feature file yet is not skipped silently,
-as the July script did: the script writes it a result file of input_failed
-rows ("expected exactly one .pt/.npz feature file"), and that file would make
-every later run skip the gene even after its features land. clear_stale
-removes exactly those files, and only once the features exist, so the gene is
-retried. Any other failure is the script's verdict and is left alone.
+One case needs help. A gene whose features cannot be read is not skipped
+silently, as the July script did: the script writes it a result file of
+input_failed rows, and that file would make every later run skip the gene.
+The usual causes are no feature file yet ("expected exactly one .pt/.npz
+feature file") and a table in the old format that export_features.py has not
+rewritten yet. clear_stale removes an input_failed file once the gene's
+feature file exists and either the failure was "no feature file" or the
+feature file is newer than the failure, so the gene is retried on the new
+features. A failure on the current features is the script's verdict and is
+left alone.
 
     python assoc_pending.py count <gene_file> <out_dir>
     python assoc_pending.py clear_stale <gene_file> <out_dir> <feature_root>
@@ -41,22 +45,37 @@ def result_path(out_dir: str, gene_id: str) -> str:
     return os.path.join(out_dir, "per_gene", f"{quote(gene_id, safe='')}.tsv")
 
 
-def has_features(gene_id: str, feature_root: str) -> bool:
-    """insample_hpp_AG.locate_features would find exactly one file."""
-    found = [p for p in (os.path.join(feature_root, gene_id, f"{gene_id}.pt"),
+def feature_files(gene_id: str, feature_root: str) -> list[str]:
+    """The files insample_hpp_AG.locate_features considers."""
+    return [p for p in (os.path.join(feature_root, gene_id, f"{gene_id}.pt"),
                          os.path.join(feature_root, gene_id, f"{gene_id}.npz"),
                          os.path.join(feature_root, f"{gene_id}.pt"),
                          os.path.join(feature_root, f"{gene_id}.npz"))
              if os.path.isfile(p)]
-    return len(found) == 1
 
 
-def failed_for_missing_features(path: str) -> bool:
+def has_features(gene_id: str, feature_root: str) -> bool:
+    """insample_hpp_AG.locate_features would find exactly one file."""
+    return len(feature_files(gene_id, feature_root)) == 1
+
+
+def input_failures(path: str) -> list[dict] | None:
+    """The rows of an all-input_failed result file, else None."""
     with open(path, newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    return bool(rows) and all(r.get("status") == "input_failed"
-                              and MISSING_FEATURES in (r.get("error") or "")
-                              for r in rows)
+    if rows and all(r.get("status") == "input_failed" for r in rows):
+        return rows
+    return None
+
+
+def is_stale(path: str, gene_id: str, feature_root: str) -> bool:
+    """An input failure that the gene's current features may not repeat."""
+    files = feature_files(gene_id, feature_root)
+    rows = input_failures(path)
+    if len(files) != 1 or rows is None:
+        return False
+    missing = all(MISSING_FEATURES in (r.get("error") or "") for r in rows)
+    return missing or os.path.getmtime(files[0]) > os.path.getmtime(path)
 
 
 def pending_genes(gene_file: str, out_dir: str) -> list[str]:
@@ -65,12 +84,11 @@ def pending_genes(gene_file: str, out_dir: str) -> list[str]:
 
 
 def clear_stale(gene_file: str, out_dir: str, feature_root: str) -> list[str]:
-    """Delete missing-feature failures for genes whose features now exist."""
+    """Delete input failures the gene's current features may not repeat."""
     cleared = []
     for gene_id in read_gene_ids(gene_file):
         path = result_path(out_dir, gene_id)
-        if (os.path.exists(path) and has_features(gene_id, feature_root)
-                and failed_for_missing_features(path)):
+        if os.path.exists(path) and is_stale(path, gene_id, feature_root):
             os.remove(path)
             cleared.append(gene_id)
     return cleared

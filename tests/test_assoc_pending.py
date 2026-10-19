@@ -60,12 +60,29 @@ def test_missing_feature_failure_is_cleared_once_features_exist(tmp_path):
 def test_other_failures_and_real_results_are_kept(tmp_path):
     genes = write_gene_file(tmp_path / "g.tsv", ["G1.1", "G2.1"])
     out, feats = tmp_path / "out", tmp_path / "feats"
+    for gene in ("G1.1", "G2.1"):              # features first: failures on them
+        add_features(feats, gene)
     write_result(out, "G1.1", "input_failed", "Fewer than 3 participants after intersection")
     write_result(out, "G2.1", "ok")
-    for gene in ("G1.1", "G2.1"):
-        add_features(feats, gene)
     assert P.clear_stale(genes, str(out), str(feats)) == []
     assert P.pending_genes(genes, str(out)) == []
+
+
+@pytest.mark.unit
+def test_failure_on_an_old_table_is_retried_once_the_table_is_rewritten(tmp_path):
+    """An old-format table makes the script fail with a missing-field error."""
+    import os
+    genes = write_gene_file(tmp_path / "g.tsv", ["G1.1"])
+    out, feats = tmp_path / "out", tmp_path / "feats"
+    add_features(feats, "G1.1")
+    path = write_result(out, "G1.1", "input_failed",
+                        "concat_tss_cage requires feature field concat_cage_tss500_mean")
+    table = feats / "G1.1" / "G1.1.npz"
+    os.utime(table, (1_000, 1_000))            # table older than the failure
+    assert P.clear_stale(genes, str(out), str(feats)) == []
+    os.utime(table, None)                       # rewritten after the failure
+    os.utime(path, (1_000, 1_000))
+    assert P.clear_stale(genes, str(out), str(feats)) == ["G1.1"]
 
 
 @pytest.mark.unit
