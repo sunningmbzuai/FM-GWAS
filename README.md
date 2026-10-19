@@ -92,11 +92,14 @@ conda run -n hpp_dynlen_a100 python get_hpp_embedding-AG_clean.py \
 ### 4b. Run association per trait
 
 ```bash
-conda run -n hpp_dynlen_a100 python insample_hpp_AG.py <trait> <sex> <rank> \
-  --world_size <N> --cohort extreme \
+conda run -n hpp_dynlen_a100 python insample_hpp_AG.py run <trait> <sex> --rank <rank> \
+  --world_size <N> \
   --feature_root <embedding_output_dir> \
   --gene_file HPP_union_gene/<trait>_extreme[_F|_M].tsv \
   --cohort_file <cohort_tsv_for_trait> \
+  --covariates <covariates_list> \
+  --gene_pca variance:0.95 \
+  --tests LRT \
   --save_path results_insample_UKBB/<trait>_extreme_<sex>
 ```
 
@@ -111,6 +114,7 @@ conda run -n hpp_dynlen_a100 python insample_hpp_AG.py <trait> <sex> <rank> \
   `<sex>=F`) — only needs a `gene_id` column, same as `candidate_genes.tsv`
   in 3a (the script no longer filters by `gene_len`)
 - `--cohort_file`: cohort tsv for `<trait>` (see below)
+- `--covariates`: age,sex for `All` cohort, and age for `F` and `M` cohort
 - `--save_path`: output directory for per-gene result tsv files
 - Output: `<save_path>/<gene_id>.tsv` (per-gene `F_obs`/`p_F_analytic` rows
   across embedding types — this is the format `FM_gene_scores/` files are
