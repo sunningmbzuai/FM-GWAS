@@ -82,8 +82,9 @@ participant's reference sequence and two haplotype sequences.
 
 ### 4. Cohorts
 
-`build_cohorts.py` builds one cohort table per trait and sex, with
-participant ID, sex, age and label, for QC-passed participants only.
+`build_cohorts.py` builds one cohort table for every trait and sex (24
+tables), with participant ID, sex, age and label, for QC-passed participants
+only.
 Phenotypes come from UKB release 676772, which honours participant
 withdrawals. Trait definitions are kept in `ukb_fields.py` and
 `ukb_traits.py`, so they can be reviewed on their own.
@@ -194,6 +195,47 @@ settings, chosen per trait:
   test for a single gene, to confirm its p-value is valid. They reproduce the
   earlier fixed-component recipe and are kept as a diagnostic.
   `check_gene_by_sex.py` shows one gene's results in every trait-by-sex cell.
+
+## Relation to the FM-GWAS scripts on `main`
+
+The statistics are `main`'s, unchanged. Everything this branch adds sits
+before or after the two FM-GWAS scripts and changes no number they compute.
+
+**Association (`insample_hpp_AG.py`, `main` 89aba56).** Used as an exact copy
+in `fmgwas/` (`fmgwas/UPSTREAM.md` gives the commit and hash; a test fails if
+the copy differs). `run_assoc.sh` calls it the way `main`'s README describes
+in step 4b, with these differences:
+
+| `main` README, step 4b | This branch |
+|---|---|
+| `--gene_file`, `--save_path` | `--gene_tsv`, `--out_dir`: the script's actual option names (the README's names are not accepted by the 89aba56 script) |
+| `--covariates`: `age,sex` for All, `age` for F and M | `age,sex` for every cell; the script drops `sex` itself in single-sex cells, so the model is the same |
+| `--gene_pca variance:0.95` | same |
+| `--tests LRT` | `LRT` for binary traits, on the 15 `concat_tss_*` embedding types; `F` for quantitative traits (the LRT needs a 0/1 label), on all 60 (`assoc_settings.py`) |
+| `--feature_root <embedding_output_dir>` (`<gene>/<gene>.pt`) | the exported tables (`<gene>/<gene>.npz`), which the script reads in place of the `.pt` with identical results (see below) |
+| one `--rank` per worker, chosen by hand | ranks per cell in proportion to its untested genes, run in parallel, then the script's `merge` |
+| `--gene_file HPP_union_gene/<trait>_extreme[_F\|_M].tsv` | the cell's target genes (`target_gene_lists/`), including targets no HPP gene list contains |
+
+**Embedding (`get_hpp_embedding-AG_clean.py`).** Run from the `main` checkout
+with three small patches that do not change the method (see Setup). It embeds
+each gene's distinct haplotype sequences once, instead of every participant's
+row; `expand_embeddings.py` then rebuilds the per-participant file.
+
+**Why results are identical.** `tests/test_fmgwas_agreement.py` builds one
+gene's embeddings twice, once per participant the way `main` does and once
+through deduplication, expansion and `.npz` export, runs the association
+script on both exactly as `run_assoc.sh` does, and requires equal result
+files for the F-test and the LRT. The two rules this rests on: the model sees
+each haplotype independently, so embedding a distinct sequence once gives the
+same numbers as embedding it in every row; and `export_features.py` converts
+the embedding fields to numbers with the same rule the script applies to a
+`.pt` file (bfloat16 to float32, other types unchanged).
+
+**Outputs.** As the script writes them: `<trait>_<sex>/per_gene/<gene>.tsv`
+and `<trait>_<sex>/ftest_results_merged.tsv` (with BH q-values) under
+`assoc_results_fmgwas_89aba56/`. Replication uses `p_LRT` for binary traits
+and `p_F` for quantitative traits, and reports the script's status for each
+test (for example a logistic fit that separated) without filtering on it.
 
 ## Running the replication
 
