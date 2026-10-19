@@ -9,9 +9,13 @@ for the same trait in UKB.
 
 The branch holds only the replication pipeline. The FM-GWAS method itself
 (the embedding and association scripts, the model code and the HPP gene
-lists) lives on the `main` branch of this repository. The pipeline calls
-those scripts from a separate checkout of `main`. No genotypes, phenotypes,
-gene lists, embeddings or results are included here.
+lists) lives on the `main` branch of this repository. The pipeline calls the
+embedding script, the model code and the HPP gene lists from a separate
+checkout of `main`. The association script is the one exception: an exact
+copy of `main`'s `insample_hpp_AG.py` is kept in `fmgwas/` (see
+`fmgwas/UPSTREAM.md`), so results never depend on which commit the checkout
+is at. No genotypes, phenotypes, gene lists, embeddings or results are
+included here.
 
 ## Study design
 
@@ -22,15 +26,15 @@ gene lists, embeddings or results are included here.
 | Phasing | Eagle v2, population-based | Eagle v2, population-based |
 | Gene sequences | TSS to TES, protein-coding, under 128 kb | same definition (GENCODE v19) |
 | Model | AIDO.DNA3-AG | same model |
-| Association | FM-GWAS F-test per embedding type | same test, same code |
+| Association | FM-GWAS F-test (quantitative) or logistic LRT (binary) per embedding type | same tests, same code |
 | Significance | p < 2.5e-6, minimum across embedding types | same threshold, plus Bonferroni over the targets |
 
 **Traits.** Cholesterol, Height and visceral adipose tissue (VAT) are tested
 as quantitative traits. Hyperlipidemia, Hypertension, Type 2 diabetes, Obesity
 and Osteoporosis are tested as binary traits. Each trait is tested in the full
-cohort and in females and males separately, matching the HPP gene lists. That
-gives 22 trait-by-sex cells, because HPP has no male gene list for
-Hypertension or Obesity.
+cohort and in females and males separately: 24 trait-by-sex cells. A cell runs
+when it has targets, including cells where HPP produced no gene list (for
+example Hypertension in males).
 
 **Targets.** By default the run tests the HPP novel associations: one target
 per gene, trait and sex. It can also test the full HPP candidate gene union.
@@ -130,9 +134,12 @@ deduplicated on the CPU.
 (`aido_dna3ag_portable.py`). It needs no flash-attention build and no custom
 operators, and it is not tied to one GPU architecture.
 
-**Feature export.** `export_features.py` turns each gene's embeddings into a
-plain numerical feature table holding the same views the association script
-builds. Every step after this one runs on CPU, with no PyTorch.
+**Feature export.** `export_features.py` writes each gene's embedding fields
+to a plain numerical table (`.npz`), converted to numbers exactly as the
+association script converts them when it reads the embedding file itself.
+The script reads the table in place of the embedding file and builds every
+embedding type from it, so results are identical. Every step after this one
+runs on CPU, with no PyTorch.
 
 **Scale.** Genes can be split across GPUs in independent shards, and an
 interrupted run resumes where it stopped. `check_embeddings.sh` reports
@@ -140,29 +147,37 @@ progress and checks embedding file integrity.
 
 ### 7. Association
 
-`run_assoc.sh` runs the FM-GWAS association script for every trait-by-sex
-cell.
+`run_assoc.sh` runs the FM-GWAS association script (`fmgwas/insample_hpp_AG.py`,
+unmodified) for every trait-by-sex cell. `assoc_settings.py` holds the
+settings, chosen per trait:
 
-- **Test:** per-gene PCA keeping 95% of the variance in each embedding type,
-  with age and sex as covariates, followed by the analytic F-test. This
-  matches the current FM-GWAS code on `main`.
-- **Rank guard:** PCA never returns more components than the feature matrix
-  actually spans (`rank_capped_pca.py`, `assoc_rank_capped.py`). Components
-  past the rank would be arbitrary directions that still count toward the
-  F-test's degrees of freedom, which makes p-values invalid at low-variant
-  genes.
-- **Parallelism:** each cell's untested genes are split into shards that run
-  in parallel (`shard_genes.py`), with BLAS threads pinned for each worker.
-- **Completeness:** a cell is marked complete only when every gene in it has
-  features and has been tested (`cell_features.py`).
+- **Binary traits** (Hyperlipidemia, Hypertension, Type 2 diabetes, Obesity,
+  Osteoporosis): logistic likelihood-ratio test (`--tests LRT`) on the 15
+  `concat_tss_*` embedding types.
+- **Quantitative traits** (Cholesterol, Height, VAT): partial F-test on all 60
+  embedding types.
+- **Both:** per-gene PCA keeping 95% of the variance (`--gene_pca
+  variance:0.95`), with age and sex as covariates (age only in single-sex
+  cells). The PCA is exact and stops at the rank of the feature matrix, and
+  both tests drop directions the covariates already span.
+- **Parallelism:** the script's own `--rank`/`--world_size` split, with more
+  ranks for cells with more untested genes and BLAS threads pinned for each
+  worker. The script's `merge` then writes one table per cell with
+  Benjamini-Hochberg q-values.
+- **Completeness:** a gene without features yet is recorded as failed by the
+  script; `assoc_pending.py` clears that record once its features exist, so
+  the gene is retried. A cell is marked complete only when every gene in it
+  has features and has been tested (`cell_features.py`).
 
 ### 8. Replication
 
 - **Recovery rate.** `compute_recovery.py` reports the fraction of
   HPP-significant genes that reach p < 2.5e-6 in UKB, using each gene's
-  minimum p-value across embedding types.
+  minimum p-value across embedding types (F-test p for quantitative traits,
+  LRT p for binary traits).
 - **Per-target replication.** `summarize_replication.py` writes three tables:
-  - the UKB p-value for every embedding type
+  - the UKB p-value for every embedding type, with the test it came from and
+    the script's status for it (for example a logistic fit that separated)
   - one row per target, with the HPP p-value, the best UKB p-value and its
     embedding type, components kept, variant counts and replication flags
   - replication rates at the genome-wide threshold and at Bonferroni
@@ -176,7 +191,8 @@ cell.
   same haplotype.
 - **Calibration checks.** `assoc_diagnostics.py` and `diagnose_assoc.py`
   compare the analytic F-test with the matrix rank and with a permutation
-  test for a single gene, to confirm its p-value is valid.
+  test for a single gene, to confirm its p-value is valid. They reproduce the
+  earlier fixed-component recipe and are kept as a diagnostic.
   `check_gene_by_sex.py` shows one gene's results in every trait-by-sex cell.
 
 ## Running the replication
@@ -198,18 +214,17 @@ cell.
 | `wasp_env` | build check, phasing, gene sequences | pysam, pandas, bcftools, tabix |
 | `microbiome` | cohorts, targets, recovery | pandas, pyarrow |
 | `deep_learning` | embeddings | PyTorch 2.5 with CUDA, scikit-learn, transformers |
-| `fmgwas_assoc` | association | numpy, scikit-learn, statsmodels (built by `setup_assoc_env.sh`) |
+| `fmgwas_assoc` | association | numpy, scipy, pandas, scikit-learn (built by `setup_assoc_env.sh`) |
 
    The environment names are set in `config.py`. Each driver checks its
    imports before it starts and never installs packages.
 
-4. **Patches to the FM-GWAS scripts.** None of them changes the method. Each
-   is idempotent and keeps a backup of the original file.
+4. **Patches to the FM-GWAS embedding script.** None of them changes the
+   method. Each is idempotent and keeps a backup of the original file. The
+   association script is not patched.
 
 | Script | Change | Applied |
 |---|---|---|
-| `fix_assoc_feature_tables.py` | association script reads the exported feature tables, so it runs without PyTorch | automatically by `run_assoc.sh` |
-| `fix_assoc_pca95.py` | brings older copies of the association script up to the 95%-variance PCA version; no change to current `main` | automatically by `run_assoc.sh` |
 | `fix_seq_column_detection.py` | embedding script finds the haplotype sequence columns | once, before embedding |
 | `fix_batch_size_override.py` | embedding batch size can be pinned, for 40 GB A100 cards | once, before embedding |
 | `fix_hf_dynamic_imports.py` | Hugging Face no longer reports the model's own modules as missing packages | once, before embedding |
@@ -236,6 +251,10 @@ the next run instead of failing.
 
 `tests/` holds unit tests for the pure-function parts of the pipeline:
 sequence writing and orientation, deduplication and expansion, trait
-labelling, target selection, sharding, PCA rank capping, recovery and
-replication summaries. They run with pytest and need no data or cluster
+labelling, target selection, pending-gene tracking, recovery and replication
+summaries. `test_fmgwas_agreement.py` checks the vendored association script
+against `main` by hash, then runs it end to end on synthetic data, once on
+embeddings computed per participant and once through deduplication,
+expansion and feature export, and requires identical results for both the
+F-test and the LRT. The tests run with pytest and need no data or cluster
 access.

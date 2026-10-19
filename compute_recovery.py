@@ -2,7 +2,7 @@
 
 This is the validation the FM-GWAS repo defines (README, "Significance
 Filtering & Replication Validation"): run the identical pipeline on an
-independent cohort, filter to p_F_analytic < 2.5e-6, deduplicate by gene_id,
+independent cohort, filter to p < 2.5e-6, deduplicate by gene_id,
 and report the proportion of HPP-significant genes that come out significant
 here too. MAGMA, GSEA and Open Targets are paper-only analyses with no code in
 the repo, and are deliberately out of scope.
@@ -11,20 +11,23 @@ The HPP-significant gene lists are HPP_union_gene/<trait>_extreme[_F|_M].tsv --
 they are already thresholded, so they are the denominator, not a candidate set
 to re-filter.
 
-Per gene we take the MINIMUM p_F_analytic across embedding types, matching the
-paper's union rule ("for each gene, the minimum p-value across embedding
-types"). Reads only the association TSVs, so it runs in any env with pandas.
+Per gene we take the MINIMUM p across embedding types, matching the paper's
+union rule ("for each gene, the minimum p-value across embedding types"). The p
+column is the cell's test (assoc_settings.p_column): p_F for quantitative
+traits, p_LRT for disease traits. Reads only the association TSVs, so it runs
+in any env with pandas.
 """
 import os
 
 import pandas as pd
 
+import assoc_settings
 import config
 import target_genes
 
 SIGNIFICANCE_THRESHOLD = 2.5e-6   # README + paper Methods, Bonferroni
 GENE_ID_COLUMN = "gene_id"
-P_COLUMN = "p_F_analytic"
+PER_GENE_DIR = "per_gene"   # insample_hpp_AG.gene_result_path
 
 
 def load_hpp_genes(trait: str, sex_name: str) -> set[str]:
@@ -55,31 +58,49 @@ def strip_version(gene_id: str) -> str:
     return str(gene_id).split(".")[0]
 
 
-def union_p_values(result_dir: str) -> pd.Series:
-    """gene_id -> minimum p_F_analytic across embedding types, for one trait/sex.
+def gene_results(result_dir: str) -> dict[str, pd.DataFrame]:
+    """Unversioned gene_id -> that gene's result rows, for one trait/sex cell.
 
-    insample_hpp_AG.py writes one TSV per gene with a row per embedding type.
-    Genes whose TSV is missing simply do not appear -- an unrun gene is not a
-    non-replicating one, and the caller reports the two separately.
+    fmgwas/insample_hpp_AG.py writes <cell>/per_gene/<gene>.tsv with a row per
+    embedding type. Genes whose TSV is missing simply do not appear -- an unrun
+    gene is not a non-replicating one, and the caller reports the two
+    separately.
     """
-    if not os.path.isdir(result_dir):
-        return pd.Series(dtype="float64")
-
-    best: dict[str, float] = {}
-    for fname in sorted(os.listdir(result_dir)):
+    per_gene = os.path.join(result_dir, PER_GENE_DIR)
+    if not os.path.isdir(per_gene):
+        return {}
+    results = {}
+    for fname in sorted(os.listdir(per_gene)):
         if not fname.endswith(".tsv"):
             continue
-        frame = pd.read_csv(os.path.join(result_dir, fname), sep="\t")
-        if P_COLUMN not in frame.columns:
-            raise KeyError(
-                f"{os.path.join(result_dir, fname)} has no {P_COLUMN} column: "
-                f"{list(frame.columns)}"
-            )
+        frame = pd.read_csv(os.path.join(per_gene, fname), sep="\t")
         gene_id = strip_version(
             frame[GENE_ID_COLUMN].iloc[0] if GENE_ID_COLUMN in frame.columns
-            else os.path.splitext(fname)[0]
+            and not frame.empty else os.path.splitext(fname)[0]
         )
-        p_min = pd.to_numeric(frame[P_COLUMN], errors="coerce").min()
+        results[gene_id] = frame
+    return results
+
+
+def p_values(frame: pd.DataFrame, p_column: str, where: str = "") -> pd.Series:
+    """The p column of one gene's rows; all-NaN when every row failed input.
+
+    A gene whose feature file could not be read gets input_failed rows with no
+    statistics at all, so the column is absent; that is "not tested", not an
+    error. Any other result without the column is.
+    """
+    if p_column in frame.columns:
+        return pd.to_numeric(frame[p_column], errors="coerce")
+    if "status" in frame.columns and (frame["status"] == "input_failed").all():
+        return pd.Series(float("nan"), index=frame.index)
+    raise KeyError(f"{where} has no {p_column} column: {list(frame.columns)}")
+
+
+def union_p_values(result_dir: str, p_column: str) -> pd.Series:
+    """gene_id -> minimum p across embedding types, for one trait/sex."""
+    best: dict[str, float] = {}
+    for gene_id, frame in gene_results(result_dir).items():
+        p_min = p_values(frame, p_column, f"{result_dir} {gene_id}").min()
         if pd.notna(p_min):
             best[gene_id] = min(best.get(gene_id, 1.0), float(p_min))
     return pd.Series(best, dtype="float64").sort_index()
@@ -121,7 +142,7 @@ def main() -> None:
                 continue
 
             result_dir = os.path.join(config.ASSOC_DIR, f"{trait}_{sex_name}")
-            ukb_p = union_p_values(result_dir)
+            ukb_p = union_p_values(result_dir, assoc_settings.p_column(trait))
             if ukb_p.empty:
                 print(f"[skip] {trait} {sex_name}: no association results in "
                       f"{result_dir}")

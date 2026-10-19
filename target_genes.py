@@ -116,7 +116,11 @@ def filter_gene_file(hpp_path: str, out_path: str, trait: str,
     them than gene_id, so this subsets rows and never rebuilds the table.
     Returns the number of rows kept; 0 means nothing to run for this cell.
     """
-    frame = read_gene_file(hpp_path)
+    # HPP called nothing significant in some cells (Hypertension M, Obesity M
+    # in the July run), so no file exists, yet a later export can still list
+    # targets there. Such a cell is built from the target list alone.
+    frame = (read_gene_file(hpp_path) if os.path.exists(hpp_path)
+             else pd.DataFrame(columns=[GENE_ID_COLUMN]))
     wanted = target_gene_ids_for(trait, sex_name, targets_path)
     kept = frame[frame[GENE_ID_COLUMN].map(strip_version).isin(wanted)]
     if sex_name == "All":
@@ -195,7 +199,8 @@ def main() -> None:
         for sex_name, suffix in config.SEX_SUFFIXES.items():
             hpp_path = os.path.join(config.HPP_UNION_GENE_DIR,
                                     f"{trait}_extreme{suffix}.tsv")
-            if not os.path.exists(hpp_path):
+            if (not os.path.exists(hpp_path)
+                    and not target_gene_ids_for(trait, sex_name)):
                 continue
             out_path = os.path.join(config.TARGET_GENE_DIR,
                                     f"{trait}_extreme{suffix}.tsv")
@@ -204,7 +209,8 @@ def main() -> None:
             written += 1
 
     if not written:
-        raise SystemExit(f"No HPP gene files found under {config.HPP_UNION_GENE_DIR}.")
+        raise SystemExit(f"No HPP gene files or targets for any cell under "
+                         f"{config.HPP_UNION_GENE_DIR}.")
 
     n_added = write_candidate_genes(
         os.path.join(config.HPP_UNION_GENE_DIR, CANDIDATE_GENES_FILE),

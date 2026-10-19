@@ -8,15 +8,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import summarize_replication as S  # noqa: E402
 
 
-def write_assoc(root, trait, sex, gene_id, p_by_type):
-    cell = root / f"{trait}_{sex}"
+def write_assoc(root, trait, sex, gene_id, p_by_type, column="p_F"):
+    cell = root / f"{trait}_{sex}" / "per_gene"
     cell.mkdir(parents=True, exist_ok=True)
+    status = "lrt_status" if column == "p_LRT" else "status"
     pd.DataFrame({
         "gene_id": gene_id,
-        "num_feature": 3,
-        "embed_type": [f"{t}_pca0.95" for t in p_by_type],
-        "F_obs": 1.0,
-        "p_F_analytic": list(p_by_type.values()),
+        "embed_type": list(p_by_type),
+        "gene_pca_components": 3,
+        "status": "ok",
+        status: "ok",
+        column: list(p_by_type.values()),
     }).to_csv(cell / f"{gene_id}.tsv", sep="\t", index=False)
 
 
@@ -69,6 +71,19 @@ def test_rates_count_only_tested_genes_in_denominator_column(tmp_path):
     assert rates["n_targets"] == 3
     assert rates["n_tested"] == 1
     assert rates["n_replicated_genomewide"] == 1
+
+
+def test_disease_cell_is_judged_on_the_lrt(tmp_path):
+    rows = pd.DataFrame({"gene_id": ["ENSG05.1"], "p_F_analytic_min": [None],
+                         "trait": ["Hypertension"], "sex": ["M"]})
+    write_assoc(tmp_path, "Hypertension", "M", "ENSG05.1",
+                {"concat_tss_cage": 1e-9, "concat_tss_dnase": 0.3}, column="p_LRT")
+    long = S.per_embedding_p(rows, str(tmp_path))
+    assert set(long["test"]) == {"LRT"}
+    summary = S.per_gene_summary(rows, long, None).set_index("gene_id")
+    assert summary.loc["ENSG05.1", "ukbb_p_min"] == 1e-9
+    assert summary.loc["ENSG05.1", "ukbb_test_status"] == "ok"
+    assert summary.loc["ENSG05.1", "status"] == S.STATUS_TESTED
 
 
 def test_variant_table_status_column_does_not_clash(tmp_path):

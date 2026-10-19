@@ -13,7 +13,8 @@
 #
 # The validation endpoint is the recovery rate: the fraction of the
 # HPP-significant genes (HPP_union_gene/<trait>_extreme[_F|_M].tsv) that come
-# out significant at p_F_analytic < 2.5e-6 in UKB. MAGMA, GSEA and Open Targets
+# out significant at p < 2.5e-6 in UKB (p_F for quantitative traits, p_LRT for
+# disease traits, see assoc_settings.py). MAGMA, GSEA and Open Targets
 # are paper-only analyses with no code in the FM-GWAS repo and are out of scope.
 #
 # Resumable: each stage is guarded by a marker file under
@@ -57,10 +58,9 @@ COHORT_DIR="${OUT_ROOT}/cohorts"
 GENE_SEQ_DIR="${OUT_ROOT}/gene_sequences"
 FEATURE_ROOT="${OUT_ROOT}/embeddings"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
-# Versioned: FM-GWAS d17eae23a6 (95%-variance PCA, raw covariates) changes
-# every p-value, and insample_hpp_AG.py skips genes whose .tsv exists, so
-# the old 50-PC results must not share a directory with the new ones.
-ASSOC_DIR="${OUT_ROOT}/assoc_results_pca95"
+# Versioned with the vendored script: mirrors config.ASSOC_DIR (run_assoc.sh
+# has the same line).
+ASSOC_DIR="${OUT_ROOT}/assoc_results_fmgwas_89aba56"
 TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists"
 # Mirrors config.RESTRICT_TO_TARGET_GENES: read it from config.py rather than
 # hardcoding it here, so the bash and python halves cannot disagree about which
@@ -145,7 +145,7 @@ if [[ "$RESTRICT_TO_TARGET_GENES" == "1" ]]; then
     else
         log "[run]  target_gene_lists: filter HPP gene lists to hpp_top_novel_genes.tsv"
         "${PHENO_PY}" target_genes.py \
-            || log "[warn] target_gene_lists: failed -- assoc will fall back to the full lists"
+            || log "[warn] target_gene_lists: failed -- assoc skips cells without a target list"
     fi
 fi
 
@@ -206,7 +206,7 @@ fi
 # time (no marker) -- it is seconds of work and its answer changes as more
 # trait/sex assoc jobs land.
 # ---------------------------------------------------------------------------
-if [[ -d "$ASSOC_DIR" ]] && ls "$ASSOC_DIR"/*/*.tsv >/dev/null 2>&1; then
+if [[ -d "$ASSOC_DIR" ]] && ls "$ASSOC_DIR"/*/per_gene/*.tsv >/dev/null 2>&1; then
     log "[run]  recovery: HPP-significant gene recovery rate in UKB"
     "${PHENO_PY}" compute_recovery.py \
         || log "[warn] recovery: failed -- association results may be partial"
@@ -214,6 +214,6 @@ else
     log "[defer] recovery: no association results under $ASSOC_DIR yet"
 fi
 
-log "Done for this run. Results (so far) under ${ASSOC_DIR}/<trait>_<sex>/<gene_id>.tsv"
+log "Done for this run. Results (so far) under ${ASSOC_DIR}/<trait>_<sex>/per_gene/<gene_id>.tsv"
 log "Re-run this script any time to pick up deferred stages once trait data lands."
 log "To force a completed stage to redo: rm ${MARKER_DIR}/<stage_name>.done"

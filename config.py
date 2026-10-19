@@ -159,11 +159,12 @@ _PATHS = {
     # Torch-free feature tables written by export_features.py on the GPU node;
     # assoc reads these instead of the .pt files.
     "FEATURE_TABLE_ROOT": lambda: _out("feature_tables"),
-    # insample_hpp_AG.py output per trait/sex. Versioned with FM-GWAS
-    # d17eae23a6 (95%-variance PCA, raw covariates).
-    "ASSOC_DIR": lambda: _out("assoc_results_pca95"),
+    # fmgwas/insample_hpp_AG.py output: <trait>_<sex>/per_gene/<gene>.tsv plus
+    # the script's merged table. Versioned with the vendored script (FM-GWAS
+    # 89aba56: logistic LRT for disease traits, exact 95%-variance PCA).
+    "ASSOC_DIR": lambda: _out("assoc_results_fmgwas_89aba56"),
     # Filtered copies of HPP_union_gene/<trait>_extreme*.tsv, written by
-    # target_genes.py; FM-GWAS reads these instead of the full lists.
+    # target_genes.py; the association stage reads these instead of the full lists.
     "TARGET_GENE_DIR": lambda: _out("target_gene_lists"),
     # Eagle phasing of the QC-passed autosomes (run_eagle_phasing_ukb.sh).
     "PHASING_DIR": lambda: _out("phasing"),

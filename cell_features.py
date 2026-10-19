@@ -1,10 +1,11 @@
 """Which genes of an assoc cell still have no features on disk.
 
 run_assoc.sh calls this after a cell succeeds, before touching its .done
-marker. insample_hpp_AG.py silently skips a gene with no feature table, so a
-cell run before the GPU pass finishes "succeeds" on a subset; marking it done
-would make every later run skip it and the late genes would never be tested.
-Leaving the marker off is cheap: the rerun skips genes whose .tsv exists.
+marker. insample_hpp_AG.py records a gene with no feature table as
+input_failed and carries on, so a cell run before the GPU pass finishes
+"succeeds" on a subset; marking it done would make every later run skip it and
+the late genes would never be tested. Leaving the marker off is cheap: the
+rerun recomputes only those genes (assoc_pending.py clears their failures).
 
 Features live one directory per gene (feature_tables/<gene>/<gene>.npz, or
 embeddings/<gene>/<gene>.pt as the fallback root). Matching is unversioned,

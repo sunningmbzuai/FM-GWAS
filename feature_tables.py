@@ -1,9 +1,10 @@
 """Read the feature tables export_features.py wrote. numpy only, no torch.
 
-This is the assoc side of the split: the GPU node turns each gene's .pt into
-one table of the views the association tests use, and this module hands those
-views back in the same shape insample_hpp_AG.py built them in. Importing this
-must not pull torch in -- that is the whole point of the split.
+The association stage itself does not use this module: fmgwas/insample_hpp_AG.py
+reads <gene>/<gene>.npz directly. This is for the diagnostics
+(diagnose_assoc.py, compare_feature_tables.py), which work on the 16
+single-track views the July/d17eae23a6 script tested. Importing this must not
+pull torch in -- that is the whole point of the split.
 """
 import os
 
@@ -11,39 +12,47 @@ import numpy as np
 
 SUBJECT_KEY = "subject_id"
 
+# view name -> raw .pt field (export_features.RAW_FIELDS)
+CONCAT_VIEWS = {
+    f"concat_{prefix}{track}": f"concat_{source}_{window}"
+    for prefix, window in (("", "mean"), ("tss_", "tss500_mean"))
+    for track, source in (("cage", "cage"), ("rnaseq", "rna_seq"),
+                          ("atac", "atac"), ("dnase", "dnase"))
+}
 
-def table_path(gene_id: str, root: str, fmt: str = "npz") -> str:
-    return os.path.join(root, gene_id, f"{gene_id}.{'npz' if fmt == 'npz' else 'csv'}")
+
+def table_path(gene_id: str, root: str) -> str:
+    return os.path.join(root, gene_id, f"{gene_id}.npz")
 
 
 def has_table(gene_id: str, root: str) -> bool:
     return os.path.exists(table_path(gene_id, root))
 
 
+def fold_halves(values: np.ndarray) -> np.ndarray:
+    """add_* view: hap1 half + hap2 half of a concat track."""
+    half = values.shape[-1] // 2
+    if values.shape[-1] != 2 * half:
+        raise ValueError(f"{values.shape[-1]} columns cannot be two haplotype halves")
+    return values[..., :half] + values[..., half:]
+
+
 def load_gene(gene_id: str, root: str) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """(subject ids, {view name: array with subjects along dim 0})."""
-    npz_path = table_path(gene_id, root, "npz")
-    if os.path.exists(npz_path):
-        with np.load(npz_path, allow_pickle=False) as handle:
-            subjects = handle[SUBJECT_KEY].astype(str)
-            views = {key: handle[key] for key in handle.files if key != SUBJECT_KEY}
-        return subjects, views
-
-    # CSV export: one rectangle per view, the subject order in its own file,
-    # and a manifest naming the views so a half-written directory is visible
-    # rather than silently short.
-    manifest = table_path(gene_id, root, "csv")
-    if not os.path.exists(manifest):
+    path = table_path(gene_id, root)
+    if not os.path.exists(path):
         raise FileNotFoundError(
             f"{gene_id}: no feature table under {root} -- run export_features.py "
             f"on the GPU node"
         )
-    out_dir = os.path.dirname(manifest)
-    with open(manifest) as fh:
-        names = [line.strip() for line in fh if line.strip()]
-    subjects = np.loadtxt(os.path.join(out_dir, f"{gene_id}.subjects.csv"),
-                          dtype=str, skiprows=1, ndmin=1)
-    views = {name: np.loadtxt(os.path.join(out_dir, f"{gene_id}.{name}.csv"),
-                              delimiter=",", ndmin=2)
-             for name in names}
+    with np.load(path, allow_pickle=False) as handle:
+        subjects = handle[SUBJECT_KEY].astype(str)
+        missing = [f for f in CONCAT_VIEWS.values() if f not in handle.files]
+        if missing:
+            raise KeyError(f"{path} lacks {missing}: an old-format table, "
+                           f"re-run export_features.py")
+        concat = {view: handle[field] for view, field in CONCAT_VIEWS.items()}
+    views = dict(concat)
+    views.update({"add_" + view.removeprefix("concat_"): fold_halves(values)
+                  for view, values in concat.items()})
     return subjects, views

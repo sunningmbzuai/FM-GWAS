@@ -2,20 +2,23 @@
 
 Why: assoc does statistics, not tensor work, but it used to torch.load() the
 .pt files -- which pinned it to the GPU cluster, because deep_learning is the
-only env with a torch compiled against that cluster's glibc. The tensor half
-of assoc is one deterministic reshape of the saved embeddings, so it belongs
-with the embedding stage: run it once on the GPU node, write plain arrays, and
-the association tests then run anywhere numpy runs.
+only env with a torch compiled against that cluster's glibc. Writing the same
+arrays as plain numpy once, on the GPU node, lets the association tests run
+anywhere numpy runs.
 
-The views written here are exactly the ones insample_hpp_AG.py builds, so the
-export is a move, not a reimplementation: the concat_* tracks as saved, their
-TSS-500 counterparts, and the add_* views that fold the two haplotype halves
-of a concat track together.
+The table holds the .pt's own fields under their own names: subject_id and the
+eight per-track means (concat_<track>_mean, concat_<track>_tss500_mean),
+converted to numpy by the same rule fmgwas/insample_hpp_AG.py applies when it
+reads a .pt (bfloat16 -> float32, other dtypes kept). That script accepts <gene>/<gene>.npz in place of
+<gene>/<gene>.pt and builds every concat/add view from these fields itself, so
+the table changes nothing it computes. Tables from before 2026-10-19 held the
+old script's derived views instead; they lack these fields and are rewritten.
 
 Runs in an env with torch (the GPU node, chained off run_embeddings.sh):
     python export_features.py                  # every gene with a .pt
     python export_features.py --genes ENSG...  # a subset
-    python export_features.py --format csv     # plain text instead of .npz
+
+A table is rewritten when it lacks a raw field or is older than its .pt.
 """
 import argparse
 import os
@@ -28,70 +31,51 @@ import config
 
 SUBJECT_KEY = "subject_id"
 
-# view name -> key in the saved .pt. The four tracks, each in its full-gene
-# and TSS-500 form.
-CONCAT_VIEWS = {
-    "concat_cage": "concat_cage_mean",
-    "concat_rnaseq": "concat_rna_seq_mean",
-    "concat_atac": "concat_atac_mean",
-    "concat_dnase": "concat_dnase_mean",
-    "concat_tss_cage": "concat_cage_tss500_mean",
-    "concat_tss_rnaseq": "concat_rna_seq_tss500_mean",
-    "concat_tss_atac": "concat_atac_tss500_mean",
-    "concat_tss_dnase": "concat_dnase_tss500_mean",
-}
-
-# add_<x> sums the two halves of concat_<x>. The half widths are the track
-# dimensions insample_hpp_AG.py hardcodes; they are asserted against the data
-# rather than inferred, so an embedding with a different track layout fails
-# loudly here instead of producing a silently wrong fold.
-TRACK_DIM = {"cage": 546, "rnaseq": 667, "atac": 167, "dnase": 305}
-
-ADD_VIEWS = {f"add_{name.removeprefix('concat_')}": name for name in CONCAT_VIEWS}
+# The .pt fields FM-GWAS reads (insample_hpp_AG.track_field): four tracks, each
+# as a gene-body mean and a TSS-500 mean.
+RAW_FIELDS = tuple(
+    f"concat_{track}_{window}"
+    for window in ("mean", "tss500_mean")
+    for track in ("cage", "dnase", "atac", "rna_seq")
+)
 
 
-def track_of(view: str) -> str:
-    """concat_tss_rnaseq -> rnaseq"""
-    return view.rsplit("_", 1)[-1]
+def as_numpy(value) -> np.ndarray:
+    """insample_hpp_AG.numpy_value, verbatim in effect: tensors narrower than
+    32 bits (the bfloat16 TSS tracks) go to float32, anything else keeps its
+    dtype."""
+    if hasattr(value, "detach"):
+        value = value.detach().cpu()
+        if value.is_floating_point() and value.element_size() < 4:
+            value = value.float()
+        value = value.numpy()
+    return np.asarray(value)
 
 
-def fold_halves(view: str, values: np.ndarray) -> np.ndarray:
-    half = TRACK_DIM[track_of(view)]
-    width = values.shape[-1]
-    if width != 2 * half:
-        raise ValueError(
-            f"{view} is {width} wide but {track_of(view)} tracks are "
-            f"{half} per haplotype -- the embedding layout changed"
-        )
-    return values[..., :half] + values[..., half:]
-
-
-def build_views(data: dict) -> dict[str, np.ndarray]:
-    """The feature views assoc tests, as float32 numpy arrays."""
-    missing = [key for key in CONCAT_VIEWS.values() if key not in data]
+def raw_fields(data: dict) -> dict[str, np.ndarray]:
+    """The per-track fields as numpy, exactly as FM-GWAS's .pt reader sees them."""
+    missing = [key for key in RAW_FIELDS if key not in data]
     if missing:
         raise KeyError(f"embedding is missing {missing}; has {sorted(data)}")
+    return {key: as_numpy(data[key]) for key in RAW_FIELDS}
 
-    # .float() before numpy: the TSS tracks are saved in a reduced dtype and
-    # numpy's copy=False path warns (and would keep bf16) otherwise.
-    concat = {view: data[key].float().numpy()
-              for view, key in CONCAT_VIEWS.items()}
-    views = dict(concat)
-    for view, source in ADD_VIEWS.items():
-        views[view] = fold_halves(source, concat[source])
-    return views
+
+def is_current(path: str) -> bool:
+    """An .npz table already holds every raw field (not an old views table)."""
+    with np.load(path, allow_pickle=False) as handle:
+        return SUBJECT_KEY in handle.files and all(k in handle.files for k in RAW_FIELDS)
 
 
 def export_gene(gene_id: str, feature_root: str, out_root: str,
-                fmt: str = "npz", force: bool = False) -> dict:
+                force: bool = False) -> dict:
     src = os.path.join(feature_root, gene_id, f"{gene_id}.pt")
     if not os.path.exists(src):
         raise FileNotFoundError(src)
 
     out_dir = os.path.join(out_root, gene_id)
-    out_path = os.path.join(out_dir, f"{gene_id}.{'npz' if fmt == 'npz' else 'csv'}")
-    marker = out_path if fmt == "npz" else os.path.join(out_dir, f"{gene_id}.subjects.csv")
-    if not force and os.path.exists(out_path) and os.path.exists(marker):
+    out_path = os.path.join(out_dir, f"{gene_id}.npz")
+    if (not force and os.path.exists(out_path) and is_current(out_path)
+            and os.path.getmtime(src) <= os.path.getmtime(out_path)):
         return {"gene_id": gene_id, "status": "exists", "path": out_path}
 
     data = torch.load(src, map_location="cpu", weights_only=False)
@@ -100,32 +84,25 @@ def export_gene(gene_id: str, feature_root: str, out_root: str,
         raise KeyError(f"{gene_id}: embedding has no {SUBJECT_KEY}")
     subjects = np.asarray([str(s) for s in subjects])
 
-    views = build_views(data)
-    for view, values in views.items():
-        if values.shape[0] != subjects.shape[0]:
+    fields = raw_fields(data)
+    for key, values in fields.items():
+        if values.ndim != 2 or values.shape[0] != subjects.shape[0]:
             raise ValueError(
-                f"{gene_id}: {view} has {values.shape[0]} rows for "
+                f"{gene_id}: {key} is {values.shape} for "
                 f"{subjects.shape[0]} subjects"
             )
 
     os.makedirs(out_dir, exist_ok=True)
-    if fmt == "npz":
-        # Uncompressed on purpose: assoc reads these repeatedly, once per
-        # trait/sex cell, and decompression would cost more than the disk.
-        np.savez(out_path, **{SUBJECT_KEY: subjects}, **views)
-    else:
-        # One CSV per view keeps each file a plain rectangle of numbers, with
-        # the subject order in its own file beside them.
-        np.savetxt(marker, subjects, fmt="%s", header=SUBJECT_KEY, comments="")
-        for view, values in views.items():
-            np.savetxt(os.path.join(out_dir, f"{gene_id}.{view}.csv"),
-                       values.reshape(values.shape[0], -1), delimiter=",")
-        with open(out_path, "w") as fh:
-            fh.write("\n".join(sorted(views)) + "\n")
+    # Uncompressed on purpose: assoc reads these repeatedly, once per
+    # trait/sex cell, and decompression would cost more than the disk.
+    # Temp + rename, so a killed export never leaves a half-written table.
+    tmp_path = os.path.join(out_dir, f".{gene_id}.partial.npz")
+    np.savez(tmp_path, **{SUBJECT_KEY: subjects}, **fields)
+    os.replace(tmp_path, out_path)
 
     return {"gene_id": gene_id, "status": "written", "path": out_path,
             "subjects": int(subjects.shape[0]),
-            "views": {view: list(values.shape) for view, values in views.items()}}
+            "fields": {key: [list(v.shape), str(v.dtype)] for key, v in fields.items()}}
 
 
 def genes_with_embeddings(feature_root: str) -> list[str]:
@@ -140,7 +117,6 @@ def main() -> int:
     parser.add_argument("--feature_root", default=config.FEATURE_ROOT)
     parser.add_argument("--out_root", default=config.FEATURE_TABLE_ROOT)
     parser.add_argument("--genes", nargs="*", default=None)
-    parser.add_argument("--format", choices=("npz", "csv"), default="npz")
     parser.add_argument("--force", action="store_true",
                         help="re-export genes that already have a table")
     args = parser.parse_args()
@@ -154,7 +130,7 @@ def main() -> int:
     for gene_id in genes:
         try:
             result = export_gene(gene_id, args.feature_root, args.out_root,
-                                 fmt=args.format, force=args.force)
+                                 force=args.force)
         except Exception as exc:  # one bad gene must not sink the rest
             print(f"{gene_id}: FAILED {type(exc).__name__}: {exc}", file=sys.stderr)
             failed += 1

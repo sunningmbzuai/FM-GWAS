@@ -1,9 +1,11 @@
 """UKBB replication of Ning's HPP target list: the three tables she asked for.
 
 For each (gene, trait, sex) in config.TARGET_GENES_TSV it reads that cell's
-insample_hpp_AG.py output under config.ASSOC_DIR and writes
+fmgwas/insample_hpp_AG.py output under config.ASSOC_DIR and writes
 
-    <out>.per_embedding.tsv  UKBB p_F_analytic per embedding type (long form)
+    <out>.per_embedding.tsv  UKBB p per embedding type (long form), with the
+                             test it came from (LRT for disease traits, F for
+                             quantitative ones) and the script's status
     <out>.tsv                one row per target: HPP p, best UKBB p and the
                              embedding type it came from, PCs kept, variant
                              counts, replication flags
@@ -20,7 +22,7 @@ Two replication thresholds, both on the minimum p across embedding types:
 Variant counts come from count_gene_variants.py's output (pass --variants).
 
     python summarize_replication.py --variants ukbb_variants_per_gene.tsv \
-        --out ukbb_replication_1003
+        --out ukbb_replication
 """
 import argparse
 import glob
@@ -28,11 +30,11 @@ import os
 
 import pandas as pd
 
+import assoc_settings
 import config
-from compute_recovery import SIGNIFICANCE_THRESHOLD, strip_version
+from compute_recovery import PER_GENE_DIR, SIGNIFICANCE_THRESHOLD, p_values, strip_version
 
 TARGETED_ALPHA = 0.05
-PCA_SUFFIX = "_pca"
 STATUS_TESTED = "tested"
 STATUS_NOT_TESTED = "no_ukbb_result"
 VARIANT_COLUMNS = ["chrom", "start", "end", "length_bp", "n_variants",
@@ -41,14 +43,23 @@ VARIANT_COLUMNS = ["chrom", "start", "end", "length_bp", "n_variants",
 
 def find_result(assoc_dir: str, trait: str, sex: str, gene_id: str) -> str | None:
     """The cell's result tsv for this gene, whatever version suffix it carries."""
-    cell = os.path.join(assoc_dir, f"{trait}_{sex}")
+    cell = os.path.join(assoc_dir, f"{trait}_{sex}", PER_GENE_DIR)
     hits = glob.glob(os.path.join(cell, f"{strip_version(gene_id)}.*tsv"))
     hits += glob.glob(os.path.join(cell, f"{strip_version(gene_id)}.tsv"))
     return sorted(set(hits))[0] if hits else None
 
 
+LONG_COLUMNS = ["gene_id", "trait", "sex", "embed_type", "gene_pca_components",
+                "test", "ukbb_p", "status"]
+
+
 def per_embedding_p(targets: pd.DataFrame, assoc_dir: str) -> pd.DataFrame:
-    """Long table: target gene_id, trait, sex, embed_type, num_feature, p."""
+    """Long table: one row per target and embedding type.
+
+    status is the script's own verdict for the test used (lrt_status for the
+    LRT, status for F): ok, or e.g. full_separation / not_converged, whose p
+    the script still reports. Nothing is filtered on it here.
+    """
     frames = []
     for row in targets.itertuples(index=False):
         path = find_result(assoc_dir, row.trait, row.sex, row.gene_id)
@@ -57,16 +68,20 @@ def per_embedding_p(targets: pd.DataFrame, assoc_dir: str) -> pd.DataFrame:
         result = pd.read_csv(path, sep="\t")
         if result.empty:
             continue
+        test = assoc_settings.stat_test(row.trait)
+        status_column = "lrt_status" if test == "LRT" else "status"
         frames.append(pd.DataFrame({
             "gene_id": row.gene_id,
             "trait": row.trait,
             "sex": row.sex,
-            "embed_type": result["embed_type"].str.split(PCA_SUFFIX).str[0],
-            "num_feature": result["num_feature"],
-            "ukbb_p": result["p_F_analytic"],
+            "embed_type": result["embed_type"],
+            "gene_pca_components": result.get("gene_pca_components"),
+            "test": test,
+            "ukbb_p": p_values(result, assoc_settings.p_column(row.trait), path),
+            "status": result.get(status_column, result.get("status")),
         }))
-    columns = ["gene_id", "trait", "sex", "embed_type", "num_feature", "ukbb_p"]
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
+    return (pd.concat(frames, ignore_index=True)[LONG_COLUMNS] if frames
+            else pd.DataFrame(columns=LONG_COLUMNS))
 
 
 def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
@@ -76,11 +91,16 @@ def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
         columns={"p_F_analytic_min": "hpp_p_min"})
     if long.empty:
         best = pd.DataFrame(columns=keys + ["ukbb_p_min", "ukbb_best_embed_type",
-                                            "num_feature"])
+                                            "gene_pca_components", "test",
+                                            "ukbb_test_status"])
     else:
-        best = (long.sort_values("ukbb_p").groupby(keys, as_index=False).first()
+        # The whole best row, not groupby.first(), which takes each column's
+        # first non-null value and can mix rows.
+        best = (long.dropna(subset=["ukbb_p"]).sort_values("ukbb_p", kind="stable")
+                .drop_duplicates(keys)
                 .rename(columns={"ukbb_p": "ukbb_p_min",
-                                 "embed_type": "ukbb_best_embed_type"}))
+                                 "embed_type": "ukbb_best_embed_type",
+                                 "status": "ukbb_test_status"}))
     out = base.merge(best, on=keys, how="left")
     out["status"] = out["ukbb_p_min"].notna().map(
         {True: STATUS_TESTED, False: STATUS_NOT_TESTED})

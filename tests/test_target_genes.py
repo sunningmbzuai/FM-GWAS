@@ -164,3 +164,13 @@ def test_candidate_genes_gain_missing_targets_once(tmp_path, targets_tsv):
     assert n_added == 2
     assert list(frame["gene_id"]) == ["ENSG00000174327.9", "ENSG00000000001.1",
                                       "ENSG00000105131.3", "ENSG00000197208.5"]
+
+
+@pytest.mark.unit
+def test_cell_without_an_hpp_file_is_built_from_the_targets(tmp_path, targets_tsv):
+    """HPP had no Cholesterol_extreme_M.tsv, but the export lists an M hit."""
+    out = tmp_path / "filtered" / "Cholesterol_extreme_M.tsv"
+    kept = T.filter_gene_file(str(tmp_path / "Cholesterol_extreme_M.tsv"), str(out),
+                              "Cholesterol", "M", targets_tsv)
+    assert kept == 1
+    assert list(pd.read_csv(out, sep="\t")["gene_id"]) == ["ENSG00000174327.6"]

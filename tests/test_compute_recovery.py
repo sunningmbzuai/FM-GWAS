@@ -11,13 +11,17 @@ import pytest
 import compute_recovery as R
 
 
-def write_gene(dirpath, gene_id: str, p_values: list[float]) -> None:
+def write_gene(dirpath, gene_id: str, p_values: list[float],
+               column: str = "p_F") -> None:
+    per_gene = dirpath / "per_gene"
+    per_gene.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame({
         "gene_id": [gene_id] * len(p_values),
         "embed_type": [f"embed_{i}" for i in range(len(p_values))],
-        "p_F_analytic": p_values,
+        "status": "ok",
+        column: p_values,
     })
-    frame.to_csv(dirpath / f"{gene_id}.tsv", sep="\t", index=False)
+    frame.to_csv(per_gene / f"{gene_id}.tsv", sep="\t", index=False)
 
 
 @pytest.mark.unit
@@ -30,31 +34,50 @@ def test_strip_version_makes_ids_comparable():
 def test_union_p_takes_the_minimum_across_embedding_types(tmp_path):
     write_gene(tmp_path, "ENSG1", [0.5, 1e-9, 0.01])
 
-    p = R.union_p_values(str(tmp_path))
+    p = R.union_p_values(str(tmp_path), "p_F")
 
     assert p.to_dict() == {"ENSG1": 1e-9}
+
+
+@pytest.mark.unit
+def test_union_p_reads_the_cells_own_test_column(tmp_path):
+    write_gene(tmp_path, "ENSG1", [0.5, 1e-9], column="p_LRT")
+
+    assert R.union_p_values(str(tmp_path), "p_LRT").to_dict() == {"ENSG1": 1e-9}
 
 
 @pytest.mark.unit
 def test_union_p_strips_versions_from_result_files(tmp_path):
     write_gene(tmp_path, "ENSG2.7", [1e-8])
 
-    assert list(R.union_p_values(str(tmp_path)).index) == ["ENSG2"]
+    assert list(R.union_p_values(str(tmp_path), "p_F").index) == ["ENSG2"]
 
 
 @pytest.mark.unit
 def test_union_p_on_a_missing_directory_is_empty():
-    assert R.union_p_values("/nonexistent/path/xyz").empty
+    assert R.union_p_values("/nonexistent/path/xyz", "p_F").empty
 
 
 @pytest.mark.unit
 def test_union_p_rejects_results_without_a_p_column(tmp_path):
-    pd.DataFrame({"gene_id": ["ENSG9"], "F_obs": [3.0]}).to_csv(
-        tmp_path / "ENSG9.tsv", sep="\t", index=False
+    (tmp_path / "per_gene").mkdir()
+    pd.DataFrame({"gene_id": ["ENSG9"], "status": ["ok"], "F_obs": [3.0]}).to_csv(
+        tmp_path / "per_gene" / "ENSG9.tsv", sep="\t", index=False
     )
 
-    with pytest.raises(KeyError, match="p_F_analytic"):
-        R.union_p_values(str(tmp_path))
+    with pytest.raises(KeyError, match="p_LRT"):
+        R.union_p_values(str(tmp_path), "p_LRT")
+
+
+@pytest.mark.unit
+def test_gene_whose_input_failed_counts_as_untested(tmp_path):
+    """No features -> input_failed rows without statistics: not tested, no error."""
+    (tmp_path / "per_gene").mkdir()
+    pd.DataFrame({"gene_id": ["ENSG9", "ENSG9"], "embed_type": ["a", "b"],
+                  "status": "input_failed", "error": "no feature file"}).to_csv(
+        tmp_path / "per_gene" / "ENSG9.tsv", sep="\t", index=False)
+
+    assert R.union_p_values(str(tmp_path), "p_LRT").empty
 
 
 @pytest.mark.unit

@@ -1,14 +1,17 @@
 """Build the replication target list from the HPP novel-association exports.
 
 Ning's HPP exports are the upstream source of truth. The current one is
-novel_genes_1006.tsv (2026-10-06, novel Height and Cholesterol hits from the
-full HPP cohort, pooled sexes). Earlier exports are kept as named lists:
-novel_genes_1003.tsv (the hits that survive the 95%-variance PCA update) and
-the July pair, novel_genes.tsv and novel_genes_Cholesterol.tsv.
+novel_genes_1019.tsv (2026-10-19, novel disease associations: Obesity, T2D,
+Osteoporosis and Hypertension, sex-specific and pooled), tested with the
+logistic LRT on the concat_tss* embeddings (assoc_settings.py). Earlier
+exports are kept as named lists: novel_genes_1006.tsv (novel Height and
+Cholesterol hits), novel_genes_1003.tsv (the hits that survive the
+95%-variance PCA update) and the July pair, novel_genes.tsv and
+novel_genes_Cholesterol.tsv.
 All are already thresholded upstream -- nothing here re-tests significance.
 
 Only gene_id, trait and sex are required. The p-value columns are optional:
-the 1006 export carries none, so its rows are unranked and keep file order,
+the 1006 and 1019 exports carry none, so their rows are unranked and keep file order,
 after any ranked rows.
 
 hpp_top_novel_genes.tsv, which config.TARGET_GENES_TSV points at, is the list
@@ -42,9 +45,11 @@ MAX_PER_CELL = None   # per (trait, sex)
 MAX_ROWS = None       # total genes the replication run covers
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-# Current HPP export (2026-10-06): novel Height/Cholesterol hits in the full
-# HPP cohort, sex "All", no p-values. Supersedes the 2026-10-03 list.
-SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1006.tsv")]
+# Current HPP export (2026-10-19): novel disease associations, no p-values.
+SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1019.tsv")]
+# 2026-10-06 export: novel Height/Cholesterol hits in the full HPP cohort,
+# sex "All", no p-values.
+OCT06_SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1006.tsv")]
 # 2026-10-03 export: the associations still significant in HPP after
 # FM-GWAS d17eae23a6 (95%-variance PCA, raw covariates).
 OCT03_SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1003.tsv")]

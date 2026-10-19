@@ -150,14 +150,8 @@ def write_cohorts(trait: str, labels: pd.Series, covariates: pd.DataFrame) -> No
     ].dropna()
 
     for sex_name, sex_val in (("All", None), ("F", 0), ("M", 1)):
-        suffix = config.SEX_SUFFIXES[sex_name]
-        gene_file = os.path.join(
-            config.HPP_UNION_GENE_DIR, f"{trait}_extreme{suffix}.tsv"
-        )
-        if not os.path.exists(gene_file):
-            print(f"[skip] {trait} {sex_name}: no gene file {gene_file}")
-            continue
-
+        # Every cell gets a cohort, gene file or not: a target list can name
+        # a cell where HPP called nothing (Hypertension M in the 1019 list).
         cohort = base if sex_val is None else base[base["sex"] == sex_val]
         out_path = os.path.join(config.COHORT_DIR, f"{trait}_{sex_name}.tsv")
         cohort.to_csv(out_path, sep="\t", index=False)
