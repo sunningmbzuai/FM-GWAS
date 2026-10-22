@@ -172,6 +172,9 @@ settings, chosen per trait:
 
 ### 8. Replication
 
+`run_assoc.sh` runs the recovery rate and the replication tables after
+the association tests, on whatever results are on disk.
+
 - **Recovery rate.** `compute_recovery.py` reports the fraction of
   HPP-significant genes that reach p < 2.5e-6 in UKB, using each gene's
   minimum p-value across embedding types (F-test p for quantitative traits,
@@ -280,10 +283,12 @@ Both hosts must see the same output directory.
    phasing, cohorts, target lists and gene sequences.
 2. **GPU:** `run_embeddings.sh` deduplicates, embeds, expands and exports the
    feature tables.
-3. **CPU:** `run_pipeline.sh` again runs the association tests (through
-   `run_assoc.sh`) and the recovery rate.
-4. **CPU:** `count_gene_variants.py`, `summarize_replication.py` and
-   `untestable_genes.py` produce the replication tables.
+3. **CPU:** `run_pipeline.sh` again, or `run_assoc.sh` on its own, runs the
+   association tests and then `compute_recovery.py` and
+   `summarize_replication.py`, so the recovery rate and replication tables
+   are written in the same step.
+4. **CPU (optional):** `count_gene_variants.py` and `untestable_genes.py`
+   add variant counts and the untestable-gene list.
 
 Every stage is resumable. A finished stage leaves a marker and is skipped on
 later runs. A stage whose inputs are not ready yet is deferred and retried on

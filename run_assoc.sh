@@ -27,6 +27,7 @@
 # ASSOC_DIR/<trait>_<sex>/assoc.rank<k>.log rather than the terminal. Per-gene
 # results land in ASSOC_DIR/<trait>_<sex>/per_gene/, and the script's own
 # merge writes ftest_results_merged.tsv (with BH q-values) once a cell is done.
+# Then compute_recovery.py and summarize_replication.py score the results.
 set -uo pipefail
 export PYTHONUNBUFFERED=1
 
@@ -364,5 +365,17 @@ for cell in "${CELLS[@]}"; do
 done
 
 log "=== assoc done ($failed cell(s) failed) ==="
-log "Next: run_pipeline.sh (either cluster) scores recovery over ${ASSOC_DIR}"
+
+# Replication summaries over whatever is on disk, partial cells included.
+# Seconds of work, so they rerun every time and never decide the exit code.
+if compgen -G "${ASSOC_DIR}/*/per_gene/*.tsv" >/dev/null; then
+    log "[run]  recovery: HPP-significant gene recovery rate in UKB"
+    "${ASSOC_PY}" "${HERE}/compute_recovery.py" \
+        || log "[warn] recovery failed -- see the output above"
+    log "[run]  replication tables -> ${ASSOC_DIR}/ukbb_replication.*"
+    "${ASSOC_PY}" "${HERE}/summarize_replication.py" \
+        || log "[warn] replication summary failed -- see the output above"
+else
+    log "[skip] summaries: no per-gene results under ${ASSOC_DIR} yet"
+fi
 (( failed == 0 ))

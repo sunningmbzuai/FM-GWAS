@@ -201,19 +201,6 @@ else
         "${PREP_PY}" build_gene_sequences.py
 fi
 
-# ---------------------------------------------------------------------------
-# Validation: recovery rate of the HPP-significant genes in UKB. Re-run every
-# time (no marker) -- it is seconds of work and its answer changes as more
-# trait/sex assoc jobs land.
-# ---------------------------------------------------------------------------
-if [[ -d "$ASSOC_DIR" ]] && ls "$ASSOC_DIR"/*/per_gene/*.tsv >/dev/null 2>&1; then
-    log "[run]  recovery: HPP-significant gene recovery rate in UKB"
-    "${PHENO_PY}" compute_recovery.py \
-        || log "[warn] recovery: failed -- association results may be partial"
-else
-    log "[defer] recovery: no association results under $ASSOC_DIR yet"
-fi
-
 log "Done for this run. Results (so far) under ${ASSOC_DIR}/<trait>_<sex>/per_gene/<gene_id>.tsv"
 log "Re-run this script any time to pick up deferred stages once trait data lands."
 log "To force a completed stage to redo: rm ${MARKER_DIR}/<stage_name>.done"
