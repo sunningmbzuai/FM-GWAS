@@ -99,3 +99,72 @@ def test_variant_table_status_column_does_not_clash(tmp_path):
     assert rates["n_tested"] == 1
     assert summary.set_index("gene_id").loc["ENSG01.3", "variant_status"] == "ok"
     assert not any(c.endswith(("_x", "_y")) for c in summary.columns)
+
+
+def test_summary_carries_case_counts_and_power(tmp_path):
+    rows = pd.DataFrame({"gene_id": ["ENSG05.1"], "p_F_analytic_min": [None],
+                         "trait": ["Hypertension"], "sex": ["M"]})
+    write_assoc(tmp_path, "Hypertension", "M", "ENSG05.1",
+                {"concat_tss_cage": 0.01}, column="p_LRT")
+    path = tmp_path / "Hypertension_M" / "per_gene" / "ENSG05.1.tsv"
+    pd.read_csv(path, sep="\t").assign(n_samples=10_000, n_cases=500).to_csv(
+        path, sep="\t", index=False)
+    summary = S.per_gene_summary(rows, S.per_embedding_p(rows, str(tmp_path)),
+                                 None).set_index("gene_id")
+    row = summary.loc["ENSG05.1"]
+    assert row["n_samples"] == 10_000
+    assert row["n_cases"] == 500
+    assert row["n_controls"] == 9_500
+    assert abs(row["n_eff"] - 4 / (1 / 500 + 1 / 9_500)) < 1e-6
+    assert 0 < row["min_detectable_r2"] < 1
+
+
+def test_power_grows_with_cases():
+    alpha = 0.05 / 25
+    small = S.min_detectable_r2(n_eff=500, df=3, alpha=alpha)
+    large = S.min_detectable_r2(n_eff=50_000, df=3, alpha=alpha)
+    assert large < small
+
+
+def test_power_is_nan_without_counts():
+    assert pd.isna(S.min_detectable_r2(n_eff=float("nan"), df=3, alpha=0.002))
+    assert pd.isna(S.min_detectable_r2(n_eff=1000, df=float("nan"), alpha=0.002))
+
+
+def test_case_counts_are_nan_for_old_results(tmp_path):
+    write_assoc(tmp_path, "Height", "F", "ENSG01.3", {"concat_cage": 1e-8})
+    summary = S.per_gene_summary(targets(),
+                                 S.per_embedding_p(targets(), str(tmp_path)),
+                                 None).set_index("gene_id")
+    assert pd.isna(summary.loc["ENSG01.3", "n_cases"])
+    assert pd.isna(summary.loc["ENSG01.3", "min_detectable_r2"])
+
+
+def write_source(path, rows):
+    pd.DataFrame(rows, columns=["gene_id", "trait", "sex"]).to_csv(
+        path, sep="\t", index=False)
+
+
+def test_target_source_matches(tmp_path):
+    src = tmp_path / "novel_genes_1019.tsv"
+    write_source(src, [("ENSG05.2", "Hypertension", "M")])
+    rows = pd.DataFrame({"gene_id": ["ENSG05.1"], "trait": ["Hypertension"],
+                         "sex": ["M"]})
+    ok, message = S.check_target_source(rows, [str(src)])
+    assert ok
+    assert "1 rows" in message and "novel_genes_1019.tsv" in message
+
+
+def test_target_source_missing_file(tmp_path):
+    ok, message = S.check_target_source(targets(), [str(tmp_path / "gone.tsv")])
+    assert not ok
+    assert "missing" in message and "gone.tsv" in message
+
+
+def test_target_source_stale_list(tmp_path):
+    src = tmp_path / "novel_genes_1019.tsv"
+    write_source(src, [("ENSG01.3", "Height", "F"), ("ENSG09.1", "VAT", "F")])
+    ok, message = S.check_target_source(targets(), [str(src)])
+    assert not ok
+    assert "1 in the export but not the target list" in message
+    assert "2 in the target list but not the export" in message

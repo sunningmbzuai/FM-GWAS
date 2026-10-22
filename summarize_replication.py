@@ -19,6 +19,19 @@ Two replication thresholds, both on the minimum p across embedding types:
                min over embedding types is not corrected for, so treat this
                one as lenient.
 
+Power: each row carries the sample and case counts the association script
+recorded for the best embedding type, n_eff (4 / (1/cases + 1/controls) for
+disease traits, n_samples for quantitative ones), and min_detectable_r2, the
+smallest variance explained that a chi-square test on gene_pca_components df
+detects with 80% power at the targeted threshold (ncp = n_eff * r2 / (1 - r2)).
+For the logistic LRT that is a rough guide, not an exact power calculation;
+use it to tell an underpowered cell from a true non-replication.
+
+Before anything else it checks that the target list is the current HPP export
+(build_target_genes.SOURCE_LISTS, novel_genes_1019.tsv): the file exists and
+holds exactly the target list's (gene, trait, sex) rows. A mismatch is printed
+as a warning, since results for a stale list still mean something.
+
 Variant counts come from count_gene_variants.py's output (pass --variants).
 
     python summarize_replication.py --variants ukbb_variants_per_gene.tsv \
@@ -28,13 +41,17 @@ import argparse
 import glob
 import os
 
+import numpy as np
 import pandas as pd
+from scipy import optimize, stats
 
 import assoc_settings
+import build_target_genes
 import config
 from compute_recovery import PER_GENE_DIR, SIGNIFICANCE_THRESHOLD, p_values, strip_version
 
 TARGETED_ALPHA = 0.05
+TARGET_POWER = 0.8
 STATUS_TESTED = "tested"
 STATUS_NOT_TESTED = "no_ukbb_result"
 VARIANT_COLUMNS = ["chrom", "start", "end", "length_bp", "n_variants",
@@ -50,7 +67,7 @@ def find_result(assoc_dir: str, trait: str, sex: str, gene_id: str) -> str | Non
 
 
 LONG_COLUMNS = ["gene_id", "trait", "sex", "embed_type", "gene_pca_components",
-                "test", "ukbb_p", "status"]
+                "test", "ukbb_p", "status", "n_samples", "n_cases"]
 
 
 def per_embedding_p(targets: pd.DataFrame, assoc_dir: str) -> pd.DataFrame:
@@ -79,6 +96,9 @@ def per_embedding_p(targets: pd.DataFrame, assoc_dir: str) -> pd.DataFrame:
             "test": test,
             "ukbb_p": p_values(result, assoc_settings.p_column(row.trait), path),
             "status": result.get(status_column, result.get("status")),
+            # Older result files predate these columns.
+            "n_samples": result.get("n_samples"),
+            "n_cases": result.get("n_cases"),
         }))
     return (pd.concat(frames, ignore_index=True)[LONG_COLUMNS] if frames
             else pd.DataFrame(columns=LONG_COLUMNS))
@@ -92,7 +112,8 @@ def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
     if long.empty:
         best = pd.DataFrame(columns=keys + ["ukbb_p_min", "ukbb_best_embed_type",
                                             "gene_pca_components", "test",
-                                            "ukbb_test_status"])
+                                            "ukbb_test_status", "n_samples",
+                                            "n_cases"])
     else:
         # The whole best row, not groupby.first(), which takes each column's
         # first non-null value and can mix rows.
@@ -107,6 +128,7 @@ def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
     targeted = TARGETED_ALPHA / len(targets)
     out["replicated_genomewide"] = out["ukbb_p_min"] < SIGNIFICANCE_THRESHOLD
     out["replicated_targeted"] = out["ukbb_p_min"] < targeted
+    out = add_power(out, targeted)
     if counts is not None:
         # count_gene_variants.py has its own status column (sequenced or why
         # not); keep it under a name that cannot collide with ours.
@@ -119,6 +141,62 @@ def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
         out = (out.assign(_bare=out["gene_id"].map(strip_version))
                .merge(bare, on="_bare", how="left").drop(columns="_bare"))
     return out
+
+
+def check_target_source(targets: pd.DataFrame,
+                        sources: list[str] = build_target_genes.SOURCE_LISTS
+                        ) -> tuple[bool, str]:
+    """Is the target list exactly the rows of the current HPP export(s)?"""
+    names = ", ".join(os.path.basename(p) for p in sources)
+    missing = [p for p in sources if not os.path.exists(p)]
+    if missing:
+        return False, f"target source export missing: {', '.join(missing)}"
+
+    def keys(rows) -> set[tuple[str, str, str]]:
+        return {(strip_version(g), t, s) for g, t, s in rows}
+
+    exported = keys((r["gene_id"], r["trait"], r["sex"])
+                    for r in build_target_genes.union_sources(sources))
+    listed = keys(targets[["gene_id", "trait", "sex"]].itertuples(index=False))
+    if exported == listed:
+        return True, f"target list matches {names} ({len(exported)} rows)"
+    return False, (f"target list does not match {names}: "
+                   f"{len(exported - listed)} in the export but not the target list, "
+                   f"{len(listed - exported)} in the target list but not the export "
+                   f"-- rerun build_target_genes.py")
+
+
+def effective_n(n_samples: pd.Series, n_cases: pd.Series) -> pd.Series:
+    """4 / (1/cases + 1/controls) for disease traits, n_samples otherwise."""
+    n_controls = n_samples - n_cases
+    balanced = 4 / (1 / n_cases + 1 / n_controls)
+    return balanced.where(n_cases.notna(), n_samples)
+
+
+def min_detectable_r2(n_eff: float, df: float, alpha: float,
+                      power: float = TARGET_POWER) -> float:
+    """Smallest r2 a df-degree chi-square test detects at alpha with this power."""
+    if not (np.isfinite(n_eff) and np.isfinite(df)) or n_eff <= 0 or df < 1:
+        return float("nan")
+    critical = stats.chi2.isf(alpha, df)
+    ncp = optimize.brentq(
+        lambda lam: stats.ncx2.sf(critical, df, lam) - power, 1e-9, 1e6)
+    return ncp / (ncp + n_eff)
+
+
+def add_power(summary: pd.DataFrame, alpha: float) -> pd.DataFrame:
+    n_samples = pd.to_numeric(summary["n_samples"], errors="coerce")
+    n_cases = pd.to_numeric(summary["n_cases"], errors="coerce")
+    n_eff = effective_n(n_samples, n_cases)
+    df = pd.to_numeric(summary["gene_pca_components"], errors="coerce")
+    return summary.assign(
+        n_samples=n_samples,
+        n_cases=n_cases,
+        n_controls=n_samples - n_cases,
+        n_eff=n_eff,
+        min_detectable_r2=[min_detectable_r2(n, k, alpha)
+                           for n, k in zip(n_eff, df)],
+    )
 
 
 def replication_rates(summary: pd.DataFrame) -> dict:
@@ -144,6 +222,8 @@ def main() -> None:
     args = ap.parse_args()
 
     targets = pd.read_csv(args.targets, sep="\t")
+    ok, message = check_target_source(targets)
+    print(f"[{'ok' if ok else 'warn'}] {message}")
     counts = pd.read_csv(args.variants, sep="\t") if args.variants else None
     long = per_embedding_p(targets, args.assoc_dir)
     summary = per_gene_summary(targets, long, counts)

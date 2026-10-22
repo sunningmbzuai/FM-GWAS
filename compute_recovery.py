@@ -30,10 +30,14 @@ GENE_ID_COLUMN = "gene_id"
 PER_GENE_DIR = "per_gene"   # insample_hpp_AG.gene_result_path
 
 
+def hpp_list_path(trait: str, sex_name: str) -> str:
+    suffix = config.SEX_SUFFIXES[sex_name]
+    return os.path.join(config.HPP_UNION_GENE_DIR, f"{trait}_extreme{suffix}.tsv")
+
+
 def load_hpp_genes(trait: str, sex_name: str) -> set[str]:
     """The HPP-significant genes for one trait/sex -- the recovery denominator."""
-    suffix = config.SEX_SUFFIXES[sex_name]
-    path = os.path.join(config.HPP_UNION_GENE_DIR, f"{trait}_extreme{suffix}.tsv")
+    path = hpp_list_path(trait, sex_name)
     if not os.path.exists(path):
         return set()
     frame = pd.read_csv(path, sep="\t")
@@ -46,6 +50,16 @@ def load_hpp_genes(trait: str, sex_name: str) -> set[str]:
         # replication failure.
         genes &= target_genes.target_gene_ids_for(trait, sex_name)
     return genes
+
+
+def skip_reason(trait: str, sex_name: str) -> str:
+    """Why load_hpp_genes came back empty: no list, or no targets in it."""
+    path = hpp_list_path(trait, sex_name)
+    if not os.path.exists(path):
+        return f"no HPP gene list at {path}"
+    n_genes = pd.read_csv(path, sep="\t")[GENE_ID_COLUMN].nunique()
+    return (f"HPP gene list has {n_genes} genes, none of them among this "
+            f"cell's target genes ({os.path.basename(path)})")
 
 
 def strip_version(gene_id: str) -> str:
@@ -138,7 +152,7 @@ def main() -> None:
         for sex_name in config.SEX_SUFFIXES:
             hpp_genes = load_hpp_genes(trait, sex_name)
             if not hpp_genes:
-                print(f"[skip] {trait} {sex_name}: no HPP gene list")
+                print(f"[skip] {trait} {sex_name}: {skip_reason(trait, sex_name)}")
                 continue
 
             result_dir = os.path.join(config.ASSOC_DIR, f"{trait}_{sex_name}")

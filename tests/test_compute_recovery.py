@@ -112,3 +112,16 @@ def test_recovery_of_an_empty_hpp_list_is_not_a_zero_rate():
     stats = R.recovery(set(), pd.Series({"g1": 1e-9}))
 
     assert math.isnan(stats["recovery_rate"])
+
+
+@pytest.mark.unit
+def test_skip_reason_tells_missing_from_no_overlap(tmp_path, monkeypatch):
+    monkeypatch.setattr(R.config, "HPP_UNION_GENE_DIR", str(tmp_path))
+    pd.DataFrame({"gene_id": ["ENSG1.1", "ENSG2.1"]}).to_csv(
+        tmp_path / "T2D_extreme_F.tsv", sep="\t", index=False)
+
+    present = R.skip_reason("T2D", "F")
+    missing = R.skip_reason("T2D", "M")
+
+    assert "2 genes" in present and "none" in present
+    assert "no HPP gene list" in missing and "T2D_extreme_M.tsv" in missing

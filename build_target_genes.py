@@ -21,8 +21,9 @@ instead -- the caps exist because one saturated cell would otherwise crowd out e
 the default: the whole point of the exports is to replicate all of them, and
 the per-gene cost is one embedding pass.
 
-The exports and the target list are data and are not committed; place them
-next to this script. Rerunning it reproduces the target list exactly, so a
+The current export, novel_genes_1019.tsv, is committed (summarize_replication.py
+checks the target list against it); the older exports and the target list are
+data and are not committed -- place them next to this script. Rerunning it reproduces the target list exactly, so a
 refreshed export is a one-command update.
 """
 import argparse

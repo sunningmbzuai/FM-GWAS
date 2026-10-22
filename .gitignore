@@ -7,3 +7,4 @@ __pycache__/
 *.pt
 *.npz
 paths.env
+!novel_genes_1019.tsv
