@@ -4,14 +4,14 @@ fmgwas/insample_hpp_AG.py is run unmodified; this module is the single place
 that turns a trait into its command-line settings, so run_assoc.sh and the
 summaries agree on which test and which embeddings a cell used.
 
-Ning, 2026-10-19 (README of FM-GWAS 89aba56 and her email):
+Ning, 2026-10-19 (README of FM-GWAS 89aba56 and her email), updated 2026-10-22:
   * gene PCA      variance:0.95
   * covariates    age,sex for All; age for F and M. The script drops sex by
                   itself when the cohort is single-sex, so age,sex is passed
                   for every cell.
-  * disease       --tests LRT on the concat_tss* embeddings
-  * quantitative  the partial F test (LRT needs a 0/1 label) on every
-                  embedding the feature file supports, as before
+  * disease       --tests LRT on all 60 embeddings (add*, add_tss*,
+                  concat*, concat_tss*)
+  * quantitative  the partial F test (LRT needs a 0/1 label) on the same 60
 
     python assoc_settings.py args <trait>     one CLI token per line
     python assoc_settings.py p_column <trait>
@@ -50,8 +50,6 @@ def embeddings(modes: tuple[str, ...], tss_options: tuple[bool, ...]) -> list[st
     return names
 
 
-# Every track subset, TSS-500 window, haplotype halves concatenated: 15 views.
-CONCAT_TSS = embeddings(("concat",), (True,))
 # Everything a four-track feature file supports: 60 views, as in d17eae23a6.
 ALL_VIEWS = embeddings(("concat", "add"), (False, True))
 
@@ -66,7 +64,7 @@ def p_column(trait: str) -> str:
 
 
 def embed_types(trait: str) -> list[str]:
-    return ALL_VIEWS if is_quantitative(trait) else CONCAT_TSS
+    return ALL_VIEWS
 
 
 def cli_args(trait: str) -> list[str]:

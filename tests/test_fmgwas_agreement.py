@@ -59,8 +59,7 @@ def test_embedding_names_match_the_scripts_own():
             for t, h in HALF.items() for w in ("mean", "tss500_mean")}
     supported = script.available_embeddings(data, 3)
     assert assoc_settings.ALL_VIEWS == supported
-    assert assoc_settings.CONCAT_TSS == [n for n in supported if n.startswith("concat_tss_")]
-    assert len(assoc_settings.CONCAT_TSS) == 15
+    assert len(assoc_settings.ALL_VIEWS) == 60
     assert script.TRACKS == assoc_settings.TRACKS
 
 

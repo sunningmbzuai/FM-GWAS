@@ -4,8 +4,8 @@
 # Runs Ning's script, fmgwas/insample_hpp_AG.py (FM-GWAS 89aba56, vendored
 # byte for byte, see fmgwas/UPSTREAM.md), unmodified. The settings per trait
 # (test, embeddings, gene PCA, covariates) come from assoc_settings.py:
-# disease traits get the logistic LRT on the concat_tss* embeddings,
-# quantitative traits the partial F test on all 60 views.
+# disease traits get the logistic LRT, quantitative traits the partial F
+# test, both on all 60 embeddings.
 #
 # Split out of run_pipeline.sh because it needs torch to read the .pt
 # embeddings, and the only env that has torch (deep_learning) is compiled
@@ -44,7 +44,7 @@ FEATURE_ROOT="${OUT_ROOT}/embeddings"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 # Versioned with the vendored script: mirrors config.ASSOC_DIR. The
 # d17eae23a6 F-test results stay in assoc_results_pca95.
-ASSOC_DIR="${OUT_ROOT}/assoc_results_fmgwas_89aba56"
+ASSOC_DIR="${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60"
 TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists"
 MARKER_DIR="${OUT_ROOT}/.stage_markers"
 
@@ -154,7 +154,7 @@ for trait in Cholesterol Height Hyperlipidemia Hypertension Obesity Osteoporosis
       F)   suffix="_F" ;;
       M)   suffix="_M" ;;
     esac
-    stage_name="assoc_fmgwas_${trait}_${sex}"
+    stage_name="assoc_all60_${trait}_${sex}"
     marker="${MARKER_DIR}/${stage_name}.done"
     gene_file="${HPP_UNION_GENE_DIR}/${trait}_extreme${suffix}.tsv"
     cohort_file="${COHORT_DIR}/${trait}_${sex}.tsv"
@@ -214,7 +214,7 @@ for cell in "${CELLS[@]}"; do
     IFS='|' read -r trait sex gene_file cohort_file <<<"$cell"
     out_dir="${ASSOC_DIR}/${trait}_${sex}"
     while IFS= read -r gene; do
-        [[ -n "$gene" ]] && log "[retry] assoc_fmgwas_${trait}_${sex}: ${gene} has features now"
+        [[ -n "$gene" ]] && log "[retry] assoc_all60_${trait}_${sex}: ${gene} has features now"
     done < <("${ASSOC_PY}" "${HERE}/assoc_pending.py" clear_stale "$gene_file" \
                  "$out_dir" "$ASSOC_FEATURE_ROOT")
     n=$("${ASSOC_PY}" "${HERE}/assoc_pending.py" count "$gene_file" "$out_dir") || n=1
@@ -235,7 +235,7 @@ for i in "${!CELLS[@]}"; do
     for (( k = 0; k < world; k++ )); do
         RANKS+=("${trait}|${sex}|${gene_file}|${cohort_file}|${k}|${world}")
     done
-    log "[plan] assoc_fmgwas_${trait}_${sex}: ${PENDING[i]} gene(s) to test in ${world} rank(s)"
+    log "[plan] assoc_all60_${trait}_${sex}: ${PENDING[i]} gene(s) to test in ${world} rank(s)"
 done
 
 (( JOBS > ${#RANKS[@]} )) && JOBS=${#RANKS[@]}
@@ -252,7 +252,7 @@ trap 'rm -rf "$FAIL_DIR"' EXIT
 
 run_rank() {
     local trait="$1" sex="$2" gene_file="$3" cohort_file="$4" k="$5" world="$6"
-    local stage_name="assoc_fmgwas_${trait}_${sex}"
+    local stage_name="assoc_all60_${trait}_${sex}"
     local out_dir="${ASSOC_DIR}/${trait}_${sex}"
     local rank_log="${out_dir}/assoc.rank${k}.log"
     local settings
@@ -296,7 +296,7 @@ run_rank() {
 # ftest_results_merged.tsv always reflects what is on disk.
 mark_cell() {
     local trait="$1" sex="$2" gene_file="$3"
-    local stage_name="assoc_fmgwas_${trait}_${sex}"
+    local stage_name="assoc_all60_${trait}_${sex}"
     local out_dir="${ASSOC_DIR}/${trait}_${sex}"
     if compgen -G "${FAIL_DIR}/${stage_name}.*" >/dev/null; then
         log "[defer] ${stage_name}: $(ls "${FAIL_DIR}/${stage_name}".* | wc -l)" \
@@ -352,7 +352,7 @@ await_slot() {
 for job in "${RANKS[@]}"; do
     IFS='|' read -r trait sex gene_file cohort_file k world <<<"$job"
     await_slot
-    log "[run]  assoc_fmgwas_${trait}_${sex} rank ${k}/${world}"
+    log "[run]  assoc_all60_${trait}_${sex} rank ${k}/${world}"
     run_rank "$trait" "$sex" "$gene_file" "$cohort_file" "$k" "$world" &
 done
 wait

@@ -3,7 +3,7 @@
 Ning's HPP exports are the upstream source of truth. The current one is
 novel_genes_1019.tsv (2026-10-19, novel disease associations: Obesity, T2D,
 Osteoporosis and Hypertension, sex-specific and pooled), tested with the
-logistic LRT on the concat_tss* embeddings (assoc_settings.py). Earlier
+logistic LRT on all 60 embeddings (assoc_settings.py). Earlier
 exports are kept as named lists: novel_genes_1006.tsv (novel Height and
 Cholesterol hits), novel_genes_1003.tsv (the hits that survive the
 95%-variance PCA update) and the July pair, novel_genes.tsv and

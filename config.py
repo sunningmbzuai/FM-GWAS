@@ -161,8 +161,10 @@ _PATHS = {
     "FEATURE_TABLE_ROOT": lambda: _out("feature_tables"),
     # fmgwas/insample_hpp_AG.py output: <trait>_<sex>/per_gene/<gene>.tsv plus
     # the script's merged table. Versioned with the vendored script (FM-GWAS
-    # 89aba56: logistic LRT for disease traits, exact 95%-variance PCA).
-    "ASSOC_DIR": lambda: _out("assoc_results_fmgwas_89aba56"),
+    # 89aba56: logistic LRT for disease traits, exact 95%-variance PCA), on all
+    # 60 embeddings. The earlier 15-view disease run stays in
+    # assoc_results_fmgwas_89aba56.
+    "ASSOC_DIR": lambda: _out("assoc_results_fmgwas_89aba56_all60"),
     # Filtered copies of HPP_union_gene/<trait>_extreme*.tsv, written by
     # target_genes.py; the association stage reads these instead of the full lists.
     "TARGET_GENE_DIR": lambda: _out("target_gene_lists"),

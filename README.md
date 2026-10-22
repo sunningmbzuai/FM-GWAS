@@ -153,10 +153,10 @@ unmodified) for every trait-by-sex cell. `assoc_settings.py` holds the
 settings, chosen per trait:
 
 - **Binary traits** (Hyperlipidemia, Hypertension, Type 2 diabetes, Obesity,
-  Osteoporosis): logistic likelihood-ratio test (`--tests LRT`) on the 15
-  `concat_tss_*` embedding types.
-- **Quantitative traits** (Cholesterol, Height, VAT): partial F-test on all 60
-  embedding types.
+  Osteoporosis): logistic likelihood-ratio test (`--tests LRT`) on all 60
+  embedding types (`add*`, `add_tss*`, `concat*`, `concat_tss*`).
+- **Quantitative traits** (Cholesterol, Height, VAT): partial F-test on the
+  same 60 embedding types.
 - **Both:** per-gene PCA keeping 95% of the variance (`--gene_pca
   variance:0.95`), with age and sex as covariates (age only in single-sex
   cells). The PCA is exact and stops at the rank of the feature matrix, and
@@ -211,7 +211,7 @@ in step 4b, with these differences:
 | `--gene_file`, `--save_path` | `--gene_tsv`, `--out_dir`: the script's actual option names (the README's names are not accepted by the 89aba56 script) |
 | `--covariates`: `age,sex` for All, `age` for F and M | `age,sex` for every cell; the script drops `sex` itself in single-sex cells, so the model is the same |
 | `--gene_pca variance:0.95` | same |
-| `--tests LRT` | `LRT` for binary traits, on the 15 `concat_tss_*` embedding types; `F` for quantitative traits (the LRT needs a 0/1 label), on all 60 (`assoc_settings.py`) |
+| `--tests LRT` | `LRT` for binary traits, `F` for quantitative traits (the LRT needs a 0/1 label), both on all 60 embedding types (`assoc_settings.py`) |
 | `--feature_root <embedding_output_dir>` (`<gene>/<gene>.pt`) | the exported tables (`<gene>/<gene>.npz`), which the script reads in place of the `.pt` with identical results (see below) |
 | one `--rank` per worker, chosen by hand | ranks per cell in proportion to its untested genes, run in parallel, then the script's `merge` |
 | `--gene_file HPP_union_gene/<trait>_extreme[_F\|_M].tsv` | the cell's target genes (`target_gene_lists/`), including targets no HPP gene list contains |
@@ -233,7 +233,7 @@ the embedding fields to numbers with the same rule the script applies to a
 
 **Outputs.** As the script writes them: `<trait>_<sex>/per_gene/<gene>.tsv`
 and `<trait>_<sex>/ftest_results_merged.tsv` (with BH q-values) under
-`assoc_results_fmgwas_89aba56/`. Replication uses `p_LRT` for binary traits
+`assoc_results_fmgwas_89aba56_all60/`. Replication uses `p_LRT` for binary traits
 and `p_F` for quantitative traits, and reports the script's status for each
 test (for example a logistic fit that separated) without filtering on it.
 
