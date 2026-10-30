@@ -23,13 +23,20 @@
 #   bash ning_oct30.sh cases       # CPU host, any time (reads phenotypes only)
 #   bash ning_oct30.sh prep        # CPU host
 #   bash ning_oct30.sh gpu --session S --sessions N [--gpus K]
+#   bash ning_oct30.sh gpu --session S --layout K0,K1,...
 #        GPU host. N sessions (nodes or allocations) of K GPUs each split the
-#        genes N*K ways; this session runs ranks S*K .. S*K+K-1, one per GPU.
-#        K defaults to the GPUs this session sees. The last session to finish
-#        expands and exports every gene. With no flags: one session, all its
-#        GPUs. Example, two sessions of two L40S:
+#        genes N*K ways, one rank per GPU. K defaults to the GPUs this session
+#        sees. Sessions with different GPU counts list every session's count
+#        in --layout instead (same list on every session). The last session to
+#        finish expands and exports every gene. With no flags: one session,
+#        all its GPUs. Examples:
+#          two sessions of two GPUs:
 #            session A:  bash ning_oct30.sh gpu --session 0 --sessions 2
 #            session B:  bash ning_oct30.sh gpu --session 1 --sessions 2
+#          two sessions of two GPUs and one of one:
+#            session A:  bash ning_oct30.sh gpu --session 0 --layout 2,2,1
+#            session B:  bash ning_oct30.sh gpu --session 1 --layout 2,2,1
+#            session C:  bash ning_oct30.sh gpu --session 2 --layout 2,2,1
 #   bash ning_oct30.sh assoc       # CPU host, after every gpu session finished
 #        Uses all but 2 cores, 8 BLAS threads per rank as in earlier runs, then
 #        checks that genes tested in the 1019 run give byte-identical results.
@@ -121,13 +128,14 @@ session_devices() {
 }
 
 stage_gpu() {
-    local session=0 sessions=1 gpus=0
+    local session=0 sessions=1 gpus=0 layout=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --session)  session="${2:?--session needs a value}"; shift 2 ;;
             --sessions) sessions="${2:?--sessions needs a value}"; shift 2 ;;
             --gpus)     gpus="${2:?--gpus needs a value}"; shift 2 ;;
-            *) die "unknown gpu option '$1' (--session S --sessions N [--gpus K])" ;;
+            --layout)   layout="${2:?--layout needs a value}"; shift 2 ;;
+            *) die "unknown gpu option '$1' (--session S --sessions N [--gpus K] | --session S --layout K0,K1,...)" ;;
         esac
     done
     command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1 \
@@ -137,17 +145,38 @@ stage_gpu() {
         [[ -n "$device" ]] && devices+=("$device")
     done < <(session_devices)
     (( ${#devices[@]} > 0 )) || die "no GPU device ids found"
-    (( gpus == 0 )) && gpus=${#devices[@]}
-    (( gpus >= 1 && gpus <= ${#devices[@]} )) \
-        || die "--gpus $gpus, but this session sees ${#devices[@]} GPU(s): ${devices[*]}"
-    (( sessions >= 1 && session >= 0 && session < sessions )) \
-        || die "need 0 <= --session < --sessions, got session $session of $sessions"
 
-    local world=$(( sessions * gpus )) done_dir="${UKBV_ASSOC_DIR}/.gpu_done"
+    # GPUs per session, one entry per session. Without --layout every session
+    # has --gpus K (default: what this one sees).
+    local counts=() count
+    if [[ -n "$layout" ]]; then
+        [[ "$layout" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] \
+            || die "--layout wants GPU counts like 2,2,1, got '$layout'"
+        IFS=',' read -r -a counts <<<"$layout"
+        sessions=${#counts[@]}
+    else
+        (( gpus == 0 )) && gpus=${#devices[@]}
+        for (( i = 0; i < sessions; i++ )); do counts+=("$gpus"); done
+    fi
+    (( sessions >= 1 && session >= 0 && session < sessions )) \
+        || die "need 0 <= --session < $sessions sessions, got session $session"
+    gpus=${counts[session]}
+    (( gpus <= ${#devices[@]} )) \
+        || die "session $session needs $gpus GPU(s), but sees ${#devices[@]}: ${devices[*]}"
+
+    # Ranks are numbered session by session: this one starts after every GPU
+    # of the sessions before it.
+    local world=0 first=0 i
+    for (( i = 0; i < sessions; i++ )); do
+        (( i < session )) && first=$(( first + counts[i] ))
+        world=$(( world + counts[i] ))
+    done
+
+    local done_dir="${UKBV_ASSOC_DIR}/.gpu_done"
     local log_dir="${UKBV_ASSOC_DIR}/gpu_logs" g rank pids=() ranks=()
     mkdir -p "$done_dir" "$log_dir"
     for (( g = 0; g < gpus; g++ )); do
-        rank=$(( session * gpus + g ))
+        rank=$(( first + g ))
         rm -f "${done_dir}/rank${rank}_of${world}"
         log "rank $rank of $world on GPU ${devices[g]} -> ${log_dir}/rank${rank}_of${world}.log"
         CUDA_VISIBLE_DEVICES="${devices[g]}" bash run_embeddings.sh \
@@ -155,7 +184,7 @@ stage_gpu() {
             > "${log_dir}/rank${rank}_of${world}.log" 2>&1 &
         pids+=("$!"); ranks+=("$rank")
     done
-    local failed=0 i
+    local failed=0
     for i in "${!pids[@]}"; do
         if wait "${pids[i]}"; then
             touch "${done_dir}/rank${ranks[i]}_of${world}"
