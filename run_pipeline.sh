@@ -60,7 +60,7 @@ FEATURE_ROOT="${OUT_ROOT}/embeddings"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 # Versioned with the vendored script: mirrors config.ASSOC_DIR (run_assoc.sh
 # has the same line).
-ASSOC_DIR="${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60"
+ASSOC_DIR="${UKBV_ASSOC_DIR:-${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60}"
 TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists"
 # Mirrors config.RESTRICT_TO_TARGET_GENES: read it from config.py rather than
 # hardcoding it here, so the bash and python halves cannot disagree about which

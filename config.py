@@ -163,8 +163,11 @@ _PATHS = {
     # the script's merged table. Versioned with the vendored script (FM-GWAS
     # 89aba56: logistic LRT for disease traits, exact 95%-variance PCA), on all
     # 60 embeddings. The earlier 15-view disease run stays in
-    # assoc_results_fmgwas_89aba56.
-    "ASSOC_DIR": lambda: _out("assoc_results_fmgwas_89aba56_all60"),
+    # assoc_results_fmgwas_89aba56. UKBV_ASSOC_DIR overrides it: a new target
+    # list needs a new directory, since each cell's run_manifest.json pins its
+    # gene list.
+    "ASSOC_DIR": lambda: _setting("UKBV_ASSOC_DIR",
+                                  _out("assoc_results_fmgwas_89aba56_all60")),
     # Filtered copies of HPP_union_gene/<trait>_extreme*.tsv, written by
     # target_genes.py; the association stage reads these instead of the full lists.
     "TARGET_GENE_DIR": lambda: _out("target_gene_lists"),

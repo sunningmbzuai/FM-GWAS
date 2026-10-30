@@ -44,10 +44,13 @@ COHORT_DIR="${OUT_ROOT}/cohorts"
 FEATURE_ROOT="${OUT_ROOT}/embeddings"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 # Versioned with the vendored script: mirrors config.ASSOC_DIR. The
-# d17eae23a6 F-test results stay in assoc_results_pca95.
-ASSOC_DIR="${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60"
+# d17eae23a6 F-test results stay in assoc_results_pca95. UKBV_ASSOC_DIR points
+# a new target list at its own directory, and its cell markers live inside it,
+# so one list's finished cells never skip another's.
+ASSOC_DIR="${UKBV_ASSOC_DIR:-${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60}"
 TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists"
-MARKER_DIR="${OUT_ROOT}/.stage_markers"
+MARKER_DIR="${UKBV_ASSOC_DIR:+${UKBV_ASSOC_DIR}/.stage_markers}"
+MARKER_DIR="${MARKER_DIR:-${OUT_ROOT}/.stage_markers}"
 
 FORCE=0
 JOBS=0          # 0 = pick from the core count, see below
