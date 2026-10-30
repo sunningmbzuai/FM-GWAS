@@ -189,6 +189,12 @@ the association tests, on whatever results are on disk.
 - **Variant counts.** `count_gene_variants.py` reports how many genotyped
   variants each target carries in UKB and bins the genes by variant count,
   for comparison with HPP.
+- **Case groups.** `case_breakdown.py` splits each disease trait's UKB cases
+  into mutually exclusive classes (diagnosis code, self-report, medication,
+  then measurement band, e.g. osteopenia vs osteoporosis, stage 1 vs stage 2
+  blood pressure) and sets the UKB case rates beside HPP's
+  (`hpp_cohort_sizes.tsv`). It reuses `build_cohorts.py`'s inputs and
+  labellers, so the classes sum to the cohort files' case counts.
 - **Testability.** `untestable_genes.py` lists the targets UKB cannot test,
   and why. Either no sequence could be built (no genotyped variant, not
   protein-coding, or longer than 128 kb), or every participant carries the

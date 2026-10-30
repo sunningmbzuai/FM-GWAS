@@ -14,7 +14,7 @@ ukb_traits.py; the readers that keep the 23,550-column dump out of memory live i
 Run with the "microbiome" conda env (pyarrow + pandas), NOT wasp_env.
 """
 import os
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, NamedTuple, Sequence
 
 import pandas as pd
 
@@ -159,9 +159,20 @@ def write_cohorts(trait: str, labels: pd.Series, covariates: pd.DataFrame) -> No
               f"({describe_labels(cohort['label'])}) -> {out_path}")
 
 
-def main() -> None:
-    os.makedirs(config.COHORT_DIR, exist_ok=True)
+class CohortInputs(NamedTuple):
+    """Everything the labellers read, for QC-passed participants."""
+    singles: pd.DataFrame
+    icd: pd.DataFrame
+    selfrep: pd.DataFrame
+    meds: pd.DataFrame
+    chol: pd.Series
+    vat: pd.Series
+    tscore: pd.Series
+    covariates: pd.DataFrame
 
+
+def load_inputs() -> CohortInputs:
+    """Read and reduce the UKB phenotypes once (also used by case_breakdown.py)."""
     qc_ids = load_qc_ids()
     print(f"QC-passed sample count: {len(qc_ids):,}")
 
@@ -198,11 +209,21 @@ def main() -> None:
     unexpected = set(covariates["sex"].dropna().unique()) - {0, 1}
     if unexpected:
         raise ValueError(f"unexpected sex coding in {F.SEX}: {unexpected}")
+    return CohortInputs(singles, icd, selfrep, meds, chol, vat, tscore, covariates)
 
+
+def labels_for(inputs: CohortInputs) -> dict[str, pd.Series]:
+    return build_labels(inputs.singles, inputs.icd, inputs.selfrep, inputs.meds,
+                        inputs.chol, inputs.vat, inputs.tscore)
+
+
+def main() -> None:
+    os.makedirs(config.COHORT_DIR, exist_ok=True)
+    inputs = load_inputs()
     print(f"labelling traits (quantitative mode: {config.QUANT_LABEL_MODE})")
-    labels = build_labels(singles, icd, selfrep, meds, chol, vat, tscore)
+    labels = labels_for(inputs)
     for trait in config.TRAITS:
-        write_cohorts(trait, labels[trait], covariates)
+        write_cohorts(trait, labels[trait], inputs.covariates)
 
 
 if __name__ == "__main__":

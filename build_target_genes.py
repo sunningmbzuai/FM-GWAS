@@ -5,7 +5,8 @@ novel_genes_fdr_1026.tsv (2026-10-26, Ning's novel_gene_FDR_1026_no_height.tsv:
 novel hits under FDR control for every trait except Height). Its Bonferroni
 column marks hits that were also Bonferroni-significant; those were replicated
 from the earlier exports, so only Bonferroni=False rows become targets
-(not_yet_validated). Tests per assoc_settings.py: F for Cholesterol and VAT,
+(not_yet_validated). known_genes_1023.tsv (Ning's 2026-10-23 positive
+controls, six known disease genes) runs in the same pass. Tests per assoc_settings.py: F for Cholesterol and VAT,
 the logistic LRT on all 60 embeddings for disease traits. Earlier
 exports are kept as named lists: novel_genes_1019.tsv (novel disease
 associations), novel_genes_1006.tsv (novel Height and
@@ -53,7 +54,11 @@ MAX_ROWS = None       # total genes the replication run covers
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 # Current HPP export (2026-10-26): novel FDR-level hits for every trait but
 # Height, flagged Bonferroni True/False; only the False rows are targets.
-SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_fdr_1026.tsv")]
+# Plus Ning's 2026-10-23 positive controls: known disease genes, run with the
+# LRT on all 60 embeddings alongside the FDR genes (no Bonferroni column).
+FDR_SOURCE = os.path.join(REPO_DIR, "novel_genes_fdr_1026.tsv")
+KNOWN_SOURCE = os.path.join(REPO_DIR, "known_genes_1023.tsv")
+SOURCE_LISTS = [FDR_SOURCE, KNOWN_SOURCE]
 # 2026-10-19 export: novel disease associations, no p-values.
 OCT19_SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1019.tsv")]
 # 2026-10-06 export: novel Height/Cholesterol hits in the full HPP cohort,

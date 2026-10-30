@@ -61,6 +61,10 @@ SELFREP_OSTEOPOROSIS = 1309
 BMI_OBESE = 30.0             # WHO obesity
 SBP_HIGH, DBP_HIGH = 140.0, 90.0   # stage-1 hypertension
 CHOL_HIGH = 6.2              # mmol/L, ~240 mg/dL, "high" total cholesterol
+# Reporting only (case_breakdown.py), never a case cutoff: stage-2
+# hypertension and WHO obesity classes II and III.
+SBP_STAGE2, DBP_STAGE2 = 160.0, 100.0
+BMI_OBESE_II, BMI_OBESE_III = 35.0, 40.0
 
 # "For osteoporosis, both osteoporosis and osteopenia are defined as 1, and
 # normal as 0" -- so the case cutoff is the OSTEOPENIA one (WHO: normal is
