@@ -22,6 +22,8 @@
 #   bash run_assoc.sh              # every trait/sex cell that is ready
 #   bash run_assoc.sh --force      # ignore stage markers and redo them
 #   bash run_assoc.sh --jobs 20    # pin how many ranks run at once
+#   bash run_assoc.sh --threads 8  # pin BLAS threads per rank (default:
+#                                  # cores / jobs, 8 on the usual nodes)
 #
 # Ranks run in parallel (see "Parallelism" below); each rank's output goes to
 # ASSOC_DIR/<trait>_<sex>/assoc.rank<k>.log rather than the terminal. Per-gene
@@ -54,10 +56,12 @@ MARKER_DIR="${MARKER_DIR:-${OUT_ROOT}/.stage_markers}"
 
 FORCE=0
 JOBS=0          # 0 = pick from the core count, see below
+THREADS_PIN=0   # 0 = cores / jobs, see below
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=1; shift ;;
         --jobs)  JOBS="${2:?--jobs needs a value}"; shift 2 ;;
+        --threads) THREADS_PIN="${2:?--threads needs a value}"; shift 2 ;;
         -h|--help)
             sed -n '2,29p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -65,6 +69,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$JOBS" =~ ^[0-9]+$ ]] || { printf -- '--jobs must be a non-negative integer, got %s\n' "$JOBS" >&2; exit 2; }
+[[ "$THREADS_PIN" =~ ^[0-9]+$ ]] || { printf -- '--threads must be a non-negative integer, got %s\n' "$THREADS_PIN" >&2; exit 2; }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
@@ -244,7 +249,10 @@ done
 
 (( JOBS > ${#RANKS[@]} )) && JOBS=${#RANKS[@]}
 (( JOBS < 1 )) && JOBS=1
+# A pinned thread count keeps every rank's BLAS identical to earlier runs
+# however many cores the node has; only how many ranks run at once changes.
 THREADS=$(( CORES / JOBS ))
+(( THREADS_PIN > 0 )) && THREADS=$THREADS_PIN
 (( THREADS < 1 )) && THREADS=1
 
 log "Ranks       : ${#RANKS[@]} over ${#CELLS[@]} cell(s), ${JOBS} at a time x ${THREADS} thread(s) of ${CORES}"

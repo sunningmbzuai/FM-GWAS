@@ -79,6 +79,7 @@ GPU="A100"
 # Dedup is on by default; --no_dedup embeds every participant row, which is the
 # old behaviour and ~3,500x more forward passes.
 DEDUP=1
+EMBED_ONLY=0
 # seqs = distinct sequences (the floor); rows = distinct (ref, hap1, hap2)
 # triples, the older and ~2-10x more expensive unit, kept for A/B checks.
 DEDUP_MODE="seqs"
@@ -106,6 +107,9 @@ Usage: bash run_embeddings.sh [--world_size N] [--rank R] [--gpu NAME]
   --dedup_mode M   seqs (default, distinct sequences) or rows (distinct
                    (ref, hap1, hap2) triples)
   --no_dedup       embed every participant row instead of the distinct ones
+  --embed_only     stop after this rank's embeddings, skipping expand/export
+                   (for ranks sharing the output; one final unsharded run
+                   then expands and exports every gene)
   --prefetch_batch N  genes per GPU batch; the next batch is deduplicated on
                    the CPU while the GPU embeds this one (default 8; 0 =
                    dedup everything first, then one GPU call)
@@ -129,6 +133,7 @@ while [[ $# -gt 0 ]]; do
         --batch_size) BATCH_SIZE="${2:?--batch_size needs a value}"; shift 2 ;;
         --dedup_mode) DEDUP_MODE="${2:?--dedup_mode needs a value}"; shift 2 ;;
         --no_dedup)   DEDUP=0; shift ;;
+        --embed_only) EMBED_ONLY=1; shift ;;
         --prefetch_batch) PREFETCH_BATCH="${2:?--prefetch_batch needs a value}"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            usage; die "unknown argument: $1" ;;
@@ -324,6 +329,10 @@ rm -rf "$SCRATCH"
 # Per-rank marker: a sharded run is only complete once every rank has one, so
 # run_pipeline.sh counts .pt files rather than trusting a single marker.
 touch "${MARKER_DIR}/embeddings.rank${RANK}_of${WORLD_SIZE}.done"
+if (( EMBED_ONLY == 1 )); then
+    log "=== Embedded (rank $RANK of $WORLD_SIZE); expand/export left to the final run ==="
+    exit 0
+fi
 
 # Fan the distinct-row embeddings back out to per-participant rows, which is
 # the layout assoc reads. Done per rank: a rank's genes are complete once its
