@@ -1,17 +1,21 @@
 """Build the replication target list from the HPP novel-association exports.
 
 Ning's HPP exports are the upstream source of truth. The current one is
-novel_genes_1019.tsv (2026-10-19, novel disease associations: Obesity, T2D,
-Osteoporosis and Hypertension, sex-specific and pooled), tested with the
-logistic LRT on all 60 embeddings (assoc_settings.py). Earlier
-exports are kept as named lists: novel_genes_1006.tsv (novel Height and
+novel_genes_fdr_1026.tsv (2026-10-26, Ning's novel_gene_FDR_1026_no_height.tsv:
+novel hits under FDR control for every trait except Height). Its Bonferroni
+column marks hits that were also Bonferroni-significant; those were replicated
+from the earlier exports, so only Bonferroni=False rows become targets
+(not_yet_validated). Tests per assoc_settings.py: F for Cholesterol and VAT,
+the logistic LRT on all 60 embeddings for disease traits. Earlier
+exports are kept as named lists: novel_genes_1019.tsv (novel disease
+associations), novel_genes_1006.tsv (novel Height and
 Cholesterol hits), novel_genes_1003.tsv (the hits that survive the
 95%-variance PCA update) and the July pair, novel_genes.tsv and
 novel_genes_Cholesterol.tsv.
 All are already thresholded upstream -- nothing here re-tests significance.
 
 Only gene_id, trait and sex are required. The p-value columns are optional:
-the 1006 and 1019 exports carry none, so their rows are unranked and keep file order,
+the 1006, 1019 and fdr_1026 exports carry none, so their rows are unranked and keep file order,
 after any ranked rows.
 
 hpp_top_novel_genes.tsv, which config.TARGET_GENES_TSV points at, is the list
@@ -21,7 +25,7 @@ instead -- the caps exist because one saturated cell would otherwise crowd out e
 the default: the whole point of the exports is to replicate all of them, and
 the per-gene cost is one embedding pass.
 
-The current export, novel_genes_1019.tsv, is committed (summarize_replication.py
+The current export, novel_genes_fdr_1026.tsv, is committed (summarize_replication.py
 checks the target list against it); the older exports and the target list are
 data and are not committed -- place them next to this script. Rerunning it reproduces the target list exactly, so a
 refreshed export is a one-command update.
@@ -33,6 +37,7 @@ import os
 GENE_ID_COLUMN = "gene_id"
 TRAIT_COLUMN = "trait"
 SEX_COLUMN = "sex"
+BONFERRONI_COLUMN = "Bonferroni"
 P_MIN_COLUMN = "p_F_analytic_min"
 P_MAX_COLUMN = "p_F_analytic_max"
 COLUMNS = [GENE_ID_COLUMN, P_MIN_COLUMN, P_MAX_COLUMN, "n_rows",
@@ -46,8 +51,11 @@ MAX_PER_CELL = None   # per (trait, sex)
 MAX_ROWS = None       # total genes the replication run covers
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-# Current HPP export (2026-10-19): novel disease associations, no p-values.
-SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1019.tsv")]
+# Current HPP export (2026-10-26): novel FDR-level hits for every trait but
+# Height, flagged Bonferroni True/False; only the False rows are targets.
+SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_fdr_1026.tsv")]
+# 2026-10-19 export: novel disease associations, no p-values.
+OCT19_SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1019.tsv")]
 # 2026-10-06 export: novel Height/Cholesterol hits in the full HPP cohort,
 # sex "All", no p-values.
 OCT06_SOURCE_LISTS = [os.path.join(REPO_DIR, "novel_genes_1006.tsv")]
@@ -78,6 +86,25 @@ def read_source(path: str) -> list[dict]:
     return rows
 
 
+def not_yet_validated(rows: list[dict]) -> list[dict]:
+    """Drop rows the export marks Bonferroni=True.
+
+    The FDR export (novel_genes_fdr_1026.tsv) lists every FDR hit with a
+    Bonferroni flag; the True rows were already replicated from the earlier
+    Bonferroni-level exports, so only the FDR-only rows are new targets.
+    Exports without the column pass through unchanged.
+    """
+    if not rows or BONFERRONI_COLUMN not in rows[0]:
+        return rows
+    flags = {str(row[BONFERRONI_COLUMN]).strip() for row in rows}
+    unknown = flags - {"True", "False"}
+    if unknown:
+        raise ValueError(f"{BONFERRONI_COLUMN} must be True/False, "
+                         f"got {sorted(unknown)}")
+    return [row for row in rows
+            if str(row[BONFERRONI_COLUMN]).strip() == "False"]
+
+
 def union_sources(paths: list[str]) -> list[dict]:
     """Every source row, deduplicated on (gene_id, trait, sex).
 
@@ -87,7 +114,7 @@ def union_sources(paths: list[str]) -> list[dict]:
     """
     merged: dict[tuple[str, str, str], dict] = {}
     for path in paths:
-        for row in read_source(path):
+        for row in not_yet_validated(read_source(path)):
             key = (row[GENE_ID_COLUMN], row[TRAIT_COLUMN], row[SEX_COLUMN])
             merged.setdefault(key, row)
     return list(merged.values())

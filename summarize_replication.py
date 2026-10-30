@@ -28,7 +28,7 @@ For the logistic LRT that is a rough guide, not an exact power calculation;
 use it to tell an underpowered cell from a true non-replication.
 
 Before anything else it checks that the target list is the current HPP export
-(build_target_genes.SOURCE_LISTS, novel_genes_1019.tsv): the file exists and
+(build_target_genes.SOURCE_LISTS, novel_genes_fdr_1026.tsv): the file exists and
 holds exactly the target list's (gene, trait, sex) rows. A mismatch is printed
 as a warning, since results for a stale list still mean something.
 

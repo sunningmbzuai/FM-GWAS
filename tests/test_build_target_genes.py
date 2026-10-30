@@ -70,6 +70,24 @@ def test_union_deduplicates_the_same_association(tmp_path):
 
 
 @pytest.mark.unit
+def test_rows_marked_bonferroni_were_validated_already(tmp_path):
+    path = tmp_path / "fdr.tsv"
+    path.write_text("gene_id\ttrait\tsex\tBonferroni\n"
+                    "ENSG1.1\tVAT\tF\tTrue\n"
+                    "ENSG2.1\tVAT\tF\tFalse\n", encoding="utf-8")
+    assert [r["gene_id"] for r in B.union_sources([str(path)])] == ["ENSG2.1"]
+
+
+@pytest.mark.unit
+def test_unknown_bonferroni_value_is_an_error(tmp_path):
+    path = tmp_path / "fdr.tsv"
+    path.write_text("gene_id\ttrait\tsex\tBonferroni\n"
+                    "ENSG1.1\tVAT\tF\tyes\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        B.union_sources([str(path)])
+
+
+@pytest.mark.unit
 def test_same_gene_in_two_cells_is_kept_twice(tmp_path):
     rows = [("ENSG1.1", 1e-11, 1e-9, 5, "VAT", "M"),
             ("ENSG1.1", 2e-11, 1e-9, 5, "VAT", "F")]
