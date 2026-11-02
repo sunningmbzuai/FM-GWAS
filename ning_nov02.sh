@@ -83,7 +83,10 @@ stage_targets() {
 }
 
 # The 30 Oct and 1019 runs embedded these genes. A gene without a feature
-# table would only come back input_failed, so stop here instead.
+# table is fine when UKB cannot test it at all (untestable_genes.py: no
+# sequence, or one haplotype); the replication table reports it as
+# no_ukbb_result, as on 30 Oct. A TESTABLE gene without one needs the GPU
+# pass, so stop for that.
 stage_features() {
     use_variant bmd
     local file missing all_missing=""
@@ -92,12 +95,37 @@ stage_features() {
         missing=$("${PHENO_PY}" cell_features.py "$file" "$FEATURE_TABLE_ROOT")
         [[ -n "$missing" ]] && all_missing+="${missing}"$'\n'
     done
-    if [[ -n "$all_missing" ]]; then
-        log "genes without a feature table:"
-        printf '%s' "$all_missing" | sort -u >&2
-        die "embed these first (prep + gpu stages, as in ning_oct30.sh)"
+    if [[ -z "$all_missing" ]]; then
+        log "every target gene has a feature table under $FEATURE_TABLE_ROOT"
+        return 0
     fi
-    log "every target gene has a feature table under $FEATURE_TABLE_ROOT"
+    local status="${UKBV_ASSOC_DIR}/untestable_genes.tsv"
+    mkdir -p "$UKBV_ASSOC_DIR"
+    "${PHENO_PY}" untestable_genes.py --out "$status" >/dev/null \
+        || die "untestable_genes.py failed"
+    local missing_list="${UKBV_ASSOC_DIR}/genes_without_features.txt"
+    printf '%s' "$all_missing" | sort -u > "$missing_list"
+    "${PHENO_PY}" - "$status" "$missing_list" <<'PY' || die "embed the genes above first (prep + gpu stages, as in ning_oct30.sh)"
+import sys
+import pandas as pd
+import untestable_genes as U
+status = pd.read_csv(sys.argv[1], sep="\t")
+status["bare"] = status["gene_id"].astype(str).str.split(".").str[0]
+by_gene = status.drop_duplicates("bare").set_index("bare")
+needs_gpu = []
+genes = [g.strip() for g in open(sys.argv[2]) if g.strip()]
+for gene in genes:
+    row = by_gene.loc[gene.split(".")[0]] if gene.split(".")[0] in by_gene.index else None
+    state = row["status"] if row is not None else "not a target"
+    untestable = state in U.UNTESTABLE
+    print(f"  {gene}: {state}"
+          + (" (UKB cannot test it; reported as no_ukbb_result)" if untestable
+             else " -> needs the GPU pass"), file=sys.stderr)
+    if not untestable:
+        needs_gpu.append(gene)
+sys.exit(1 if needs_gpu else 0)
+PY
+    log "no GPU pass needed: every target gene without features is untestable in UKB"
 }
 
 stage_cohorts() {
