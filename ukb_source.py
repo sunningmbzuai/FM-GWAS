@@ -8,6 +8,7 @@ so peak memory is one batch, not the whole field.
 Needs pyarrow -- run under the "microbiome" env, NOT wasp_env (which has no
 pyarrow) and never the precompiled deep_learning env.
 """
+import re
 from typing import Callable, Iterable, Iterator, Sequence
 
 import numpy as np
@@ -150,3 +151,27 @@ def mean_of_readings(frame: pd.DataFrame, primary: Sequence[str],
     primary_mean = frame[list(primary)].mean(axis=1)
     fallback_mean = frame[list(fallback)].mean(axis=1)
     return primary_mean.fillna(fallback_mean)
+
+
+def femur_bmd_columns(names: Iterable[str]) -> tuple[str, str]:
+    """(left, right) total femur BMD columns of the DXA export, first imaging visit.
+
+    Matched by name (F.FEMUR_TOTAL_BMD_PATTERN), skipping T-/Z-score, BMC and
+    area columns. Anything other than exactly one left and one right match
+    raises, listing every femur column, so a renamed export stops the run
+    instead of labelling from the wrong measure.
+    """
+    names = list(names)
+    pattern = re.compile(F.FEMUR_TOTAL_BMD_PATTERN)
+    hits = [n for n in names
+            if pattern.search(n.lower())
+            and n.endswith(F.DXA_INSTANCE_SUFFIX)
+            and not any(x in n.lower() for x in F.FEMUR_TOTAL_BMD_EXCLUDE)]
+    left = [n for n in hits if "left" in n.lower()]
+    right = [n for n in hits if "right" in n.lower()]
+    if len(left) != 1 or len(right) != 1:
+        femur = sorted(n for n in names if "femur" in n.lower())
+        raise KeyError(
+            f"expected one left and one right total femur BMD column, got "
+            f"left={left} right={right}; femur columns in the export: {femur}")
+    return left[0], right[0]

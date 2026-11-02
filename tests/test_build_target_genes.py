@@ -169,3 +169,23 @@ def test_unranked_rows_write_blank_p_values(tmp_path):
     assert written[0]["p_F_analytic_min"] == ""
     assert written[0]["n_rows"] == ""
     assert (written[0]["trait"], written[0]["sex"]) == ("Height", "All")
+
+
+@pytest.mark.unit
+def test_keep_validated_keeps_bonferroni_rows(tmp_path):
+    path = tmp_path / "fdr.tsv"
+    path.write_text("gene_id\ttrait\tsex\tBonferroni\n"
+                    "ENSG1.1\tVAT\tF\tTrue\n"
+                    "ENSG2.1\tVAT\tF\tFalse\n", encoding="utf-8")
+    rows = B.union_sources([str(path)], keep_validated=True)
+    assert [r["gene_id"] for r in rows] == ["ENSG1.1", "ENSG2.1"]
+
+
+@pytest.mark.unit
+def test_keep_traits_filters_and_rejects_unknown_traits():
+    rows = [{"gene_id": "A", "trait": "VAT", "sex": "F"},
+            {"gene_id": "B", "trait": "T2D", "sex": "F"}]
+    assert B.keep_traits(rows, None) == rows
+    assert [r["gene_id"] for r in B.keep_traits(rows, ["T2D"])] == ["B"]
+    with pytest.raises(SystemExit, match="Obesity"):
+        B.keep_traits(rows, ["Obesity"])

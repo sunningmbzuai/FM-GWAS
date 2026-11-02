@@ -42,7 +42,7 @@ PREP_PY="${CONDA_ROOT}/envs/wasp_env/bin/python3"
 # Only HPP_union_gene (paths.sh) is still read from the FM-GWAS checkout; the
 # association script itself is the vendored copy next to this file.
 
-COHORT_DIR="${OUT_ROOT}/cohorts"
+COHORT_DIR="${UKBV_COHORT_DIR:-${OUT_ROOT}/cohorts}"   # mirrors config.COHORT_DIR
 FEATURE_ROOT="${OUT_ROOT}/embeddings"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 # Versioned with the vendored script: mirrors config.ASSOC_DIR. The
@@ -50,7 +50,7 @@ FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 # a new target list at its own directory, and its cell markers live inside it,
 # so one list's finished cells never skip another's.
 ASSOC_DIR="${UKBV_ASSOC_DIR:-${OUT_ROOT}/assoc_results_fmgwas_89aba56_all60}"
-TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists"
+TARGET_GENE_DIR="${UKBV_TARGET_GENE_DIR:-${OUT_ROOT}/target_gene_lists}"
 MARKER_DIR="${UKBV_ASSOC_DIR:+${UKBV_ASSOC_DIR}/.stage_markers}"
 MARKER_DIR="${MARKER_DIR:-${OUT_ROOT}/.stage_markers}"
 

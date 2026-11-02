@@ -110,16 +110,18 @@ def not_yet_validated(rows: list[dict]) -> list[dict]:
             if str(row[BONFERRONI_COLUMN]).strip() == "False"]
 
 
-def union_sources(paths: list[str]) -> list[dict]:
+def union_sources(paths: list[str], keep_validated: bool = False) -> list[dict]:
     """Every source row, deduplicated on (gene_id, trait, sex).
 
     The same association appears in more than one export with p-values that
     differ in the last digits (one export was rounded on the way out). The
     first source listed wins, so the union never depends on float equality.
+    keep_validated keeps Bonferroni=True rows too (every FDR hit).
     """
     merged: dict[tuple[str, str, str], dict] = {}
     for path in paths:
-        for row in not_yet_validated(read_source(path)):
+        rows = read_source(path)
+        for row in (rows if keep_validated else not_yet_validated(rows)):
             key = (row[GENE_ID_COLUMN], row[TRAIT_COLUMN], row[SEX_COLUMN])
             merged.setdefault(key, row)
     return list(merged.values())
@@ -186,27 +188,49 @@ def parse_args() -> argparse.Namespace:
                              "default: no cap")
     parser.add_argument("--max-rows", type=int, default=MAX_ROWS,
                         help="keep at most N genes overall; default: no cap")
+    parser.add_argument("--source", action="append", dest="sources",
+                        help="source export(s) to use instead of the default "
+                             "FDR + known-gene lists; repeatable")
+    parser.add_argument("--keep-validated", action="store_true",
+                        help="keep Bonferroni=True rows (default: FDR-only "
+                             "rows, the True ones being replicated earlier)")
+    parser.add_argument("--traits", nargs="+",
+                        help="keep only these traits (default: all)")
+    parser.add_argument("--out", default=OUTPUT_TSV,
+                        help=f"output target list (default: {OUTPUT_TSV})")
     return parser.parse_args()
+
+
+def keep_traits(rows: list[dict], traits: list[str] | None) -> list[dict]:
+    """Rows of the named traits; every row when traits is None."""
+    if traits is None:
+        return rows
+    unknown = set(traits) - {row[TRAIT_COLUMN] for row in rows}
+    if unknown:
+        raise SystemExit(f"--traits names trait(s) absent from the sources: "
+                         f"{sorted(unknown)}")
+    return [row for row in rows if row[TRAIT_COLUMN] in set(traits)]
 
 
 def main() -> None:
     args = parse_args()
-    missing = [p for p in SOURCE_LISTS if not os.path.exists(p)]
+    sources = args.sources or SOURCE_LISTS
+    missing = [p for p in sources if not os.path.exists(p)]
     if missing:
         raise SystemExit(f"Source list(s) not found: {missing}")
 
-    rows = union_sources(SOURCE_LISTS)
+    rows = keep_traits(union_sources(sources, args.keep_validated), args.traits)
     targets = select_targets(rows, args.max_per_cell, args.max_rows)
-    write_targets(targets, OUTPUT_TSV)
+    write_targets(targets, args.out)
 
     print(f"{len(rows)} novel associations in "
-          f"{len(SOURCE_LISTS)} source list(s)")
+          f"{len(sources)} source list(s)")
     for trait, sex in sorted({(r[TRAIT_COLUMN], r[SEX_COLUMN])
                               for r in targets}):
         n = sum(1 for r in targets
                 if (r[TRAIT_COLUMN], r[SEX_COLUMN]) == (trait, sex))
         print(f"  {trait} {sex}: {n}")
-    print(f"Wrote {len(targets)} targets to {OUTPUT_TSV}")
+    print(f"Wrote {len(targets)} targets to {args.out}")
 
 
 if __name__ == "__main__":

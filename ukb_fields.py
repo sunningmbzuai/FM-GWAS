@@ -102,3 +102,27 @@ EXPORT_BMD_TSCORE_SITES = (
 # modelling") and by its dictionaries' n_exact_zero column. NOT applied to
 # T-scores, where 0 means "at the young-adult reference mean" and is real.
 DXA_ZERO_IS_MISSING = (EXPORT_VAT_VOLUME,)
+
+# ---- HPP-aligned definitions (Ning, 2026-11-02, UKBB_case_control.csv) ------
+# Ning mapped each HPP curated phenotype onto UKB sources; ukb_traits_hpp.py
+# applies them. Controls are everyone else in the QC-passed cohort, except
+# Obesity (normal BMI only) and Osteoporosis under the BMD option (measured
+# normal femur BMD only).
+BMI_HPP_OBESE = 30.0                       # case: BMI > 30
+BMI_HPP_NORMAL = (18.5, 24.9)              # control: 18.5 < BMI < 24.9
+# Self-reported diabetes, any type (coding 6): diabetes 1220, type 1 1222,
+# type 2 1223. Field 2443 ("doctor diagnosed diabetes") is any type too.
+SELFREP_DIABETES_ANY = (SELFREP_DIABETES_UNSPEC, SELFREP_T1D, SELFREP_T2D)
+# HPP classes osteoporosis/osteopenia vs normal by the lower of the left and
+# right total femur BMD at 0.88 g/cm2 (Ning, pending HPP platform team).
+FEMUR_BMD_LOW = 0.88                       # g/cm2; case: min(L, R) < 0.88
+# Total femur BMD in the phenotypes export, first imaging visit. Resolved by
+# name from the export schema (femur_bmd_columns in ukb_source.py), because
+# the export renames UKB fields; the run fails if it cannot find exactly one
+# left and one right column.
+FEMUR_TOTAL_BMD_PATTERN = r"(femur.*total|total.*femur).*bmd"
+FEMUR_TOTAL_BMD_EXCLUDE = ("t_score", "z_score", "bmc", "area")
+DXA_INSTANCE_SUFFIX = "_i2"
+# Ning's UKB field ids for total femur BMD, reported next to the export
+# columns by bmd_report.py so the two can be checked against each other.
+RAW_FEMUR_BMD_FIELDS = ("23291", "23212")

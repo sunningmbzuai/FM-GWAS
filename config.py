@@ -45,7 +45,27 @@ GENE_TYPE = "protein_coding"   # GTF gene_type filter, per Methods
 # build_target_genes.py regenerates the TSV from the HPP exports; edit those
 # and rerun, never the TSV by hand.
 RESTRICT_TO_TARGET_GENES = True
-TARGET_GENES_TSV = os.path.join(HERE, "hpp_top_novel_genes.tsv")
+# UKBV_TARGET_GENES_TSV points a run at a different target list (it is read
+# at import, like the label settings below).
+TARGET_GENES_TSV = os.environ.get(
+    "UKBV_TARGET_GENES_TSV", os.path.join(HERE, "hpp_top_novel_genes.tsv"))
+
+# ---- disease label definitions ---------------------------------------------
+# "paper": the FM-GWAS Methods reading (ukb_traits.py): diagnosis, medication
+#   or a measurement cutoff makes a case, and a control needs the evidence to
+#   be classified.
+# "hpp_1102": Ning's 2026-11-02 mapping of the HPP curated phenotypes onto UKB
+#   (UKBB_case_control.csv, ukb_traits_hpp.py).
+# UKBV_LABEL_DEFS selects. Each label set needs its own cohort and results
+# directories (UKBV_COHORT_DIR, UKBV_ASSOC_DIR).
+LABEL_DEFS_CHOICES = ("paper", "hpp_1102")
+LABEL_DEFS = os.environ.get("UKBV_LABEL_DEFS", "paper")
+# Osteoporosis under hpp_1102, Ning's two options:
+#   "bmd": ICD-10 M80-M81 + self-report + min total femur BMD < 0.88 g/cm2
+#          (closest to HPP); controls have a measured, normal femur BMD.
+#   "diagnosis": ICD-10 M80-M81 + self-report only; everyone else a control.
+OSTEO_DEF_CHOICES = ("bmd", "diagnosis")
+OSTEO_DEF = os.environ.get("UKBV_OSTEO_DEF", "bmd")
 
 # Conda env names, resolved under UKBV_CONDA_ROOT by the shell drivers.
 PREP_ENV = "wasp_env"      # pysam + pandas: build check, gene sequences
@@ -147,7 +167,8 @@ _PATHS = {
     "EAGLE_GENETIC_MAP": lambda: _eagle("tables/genetic_map_hg19_withX.txt.gz"),
     # ---- this pipeline's own outputs ----------------------------------------
     "OUT_ROOT": lambda: _out(),
-    "COHORT_DIR": lambda: _out("cohorts"),           # <trait>_<All|F|M>.tsv
+    # <trait>_<All|F|M>.tsv; UKBV_COHORT_DIR for another label set.
+    "COHORT_DIR": lambda: _setting("UKBV_COHORT_DIR", _out("cohorts")),
     "GENE_SEQ_DIR": lambda: _out("gene_sequences"),  # <gene_id>.tsv
     "FEATURE_ROOT": lambda: _out("embeddings"),      # embedding script output
     # Deduplicated embedding path: dedup_gene_sequences.py writes the distinct
@@ -170,7 +191,8 @@ _PATHS = {
                                   _out("assoc_results_fmgwas_89aba56_all60")),
     # Filtered copies of HPP_union_gene/<trait>_extreme*.tsv, written by
     # target_genes.py; the association stage reads these instead of the full lists.
-    "TARGET_GENE_DIR": lambda: _out("target_gene_lists"),
+    "TARGET_GENE_DIR": lambda: _setting("UKBV_TARGET_GENE_DIR",
+                                        _out("target_gene_lists")),
     # Eagle phasing of the QC-passed autosomes (run_eagle_phasing_ukb.sh).
     "PHASING_DIR": lambda: _out("phasing"),
     "PHASED_VCF": lambda: _out("phasing/all.norm.phased.vcf.gz"),

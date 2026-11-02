@@ -97,6 +97,14 @@ withdrawals. Trait definitions are kept in `ukb_fields.py` and
   osteopenia counts as osteoporosis and prediabetes counts as Type 2
   diabetes.
 
+A second label set, `hpp_1102` (`ukb_traits_hpp.py`), follows the HPP
+curated phenotypes as mapped onto UKB by Ning on 2026-11-02: cases from
+ICD-10 and self-report only (plus field 2443 for T2D and total femur BMD
+< 0.88 g/cm² for Osteoporosis), everyone else a control, and Obesity as
+BMI > 30 against 18.5 < BMI < 24.9. `UKBV_LABEL_DEFS=hpp_1102` selects it,
+`UKBV_OSTEO_DEF=bmd|diagnosis` picks the Osteoporosis option, and
+`ning_nov02.sh` runs the disease genes with it in their own directories.
+
 `ukb_source.py` reads the 23,550-column UKB release one column at a time, so
 the full table is never loaded into memory.
 

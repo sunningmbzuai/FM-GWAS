@@ -137,6 +137,42 @@ def disease_tiers(inputs: B.CohortInputs) -> dict[str, Tiers]:
     }
 
 
+def hpp_disease_tiers(inputs: B.CohortInputs) -> dict[str, Tiers]:
+    """Class lists for the hpp_1102 label set (ukb_traits_hpp.py)."""
+    icd, selfrep, singles = inputs.icd, inputs.selfrep, inputs.singles
+    osteo = [("ICD-10 M80-M81", icd["osteoporosis"]),
+             ("self-reported osteoporosis", selfrep["osteoporosis"])]
+    if config.OSTEO_DEF == "bmd":
+        osteo.append(("min total femur BMD < 0.88 g/cm2, no diagnosis",
+                      inputs.femur_bmd < F.FEMUR_BMD_LOW))
+    return {
+        "Hyperlipidemia": [("ICD-10 E78", icd["hyperlipidemia"]),
+                           ("self-reported high cholesterol",
+                            selfrep["high_cholesterol"])],
+        "Hypertension": [("ICD-10 I10-I15", icd["hypertension"]),
+                         ("self-reported hypertension", selfrep["hypertension"])],
+        "Obesity": obesity_tiers(singles[F.BMI]),
+        "Osteoporosis": osteo,
+        "T2D": [("ICD-10 E11", icd["t2d"]),
+                ("self-reported diabetes (any type)", selfrep["diabetes_any"]),
+                ("doctor-diagnosed diabetes (field 2443)",
+                 singles[F.DIABETES_SELFREP] == 1)],
+    }
+
+
+def tiers_for(inputs: B.CohortInputs) -> dict[str, Tiers]:
+    if config.LABEL_DEFS == "paper":
+        return disease_tiers(inputs)
+    return hpp_disease_tiers(inputs)
+
+
+def out_dir_name() -> str:
+    """case_breakdown for the paper labels (as before), else per label set."""
+    if config.LABEL_DEFS == "paper":
+        return "case_breakdown"
+    return f"case_breakdown_{config.LABEL_DEFS}_osteo_{config.OSTEO_DEF}"
+
+
 def cohort_labels(labels: pd.Series, covariates: pd.DataFrame,
                   sex: int | None) -> pd.Series:
     """The label column of the cohort file build_cohorts.write_cohorts writes."""
@@ -158,13 +194,14 @@ def case_rates(ukb: pd.DataFrame, hpp: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
-    out_dir = os.path.join(config.OUT_ROOT, "case_breakdown")
+    B.check_label_settings()
+    out_dir = os.path.join(config.OUT_ROOT, out_dir_name())
     os.makedirs(out_dir, exist_ok=True)
     inputs = B.load_inputs()
     labels = B.labels_for(inputs)
 
     rows, totals = [], []
-    for trait, tiers in disease_tiers(inputs).items():
+    for trait, tiers in tiers_for(inputs).items():
         names = [name for name, _ in tiers]
         for sex_name, sex_val in SEXES:
             cohort = cohort_labels(labels[trait], inputs.covariates, sex_val)

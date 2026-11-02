@@ -22,6 +22,7 @@ import config
 import ukb_fields as F
 import ukb_source as S
 import ukb_traits as T
+import ukb_traits_hpp as H
 
 SINGLE_COLUMNS = (
     F.SEX, F.AGE, F.HEIGHT, F.BMI, F.DIABETES_SELFREP, F.HBA1C,
@@ -42,6 +43,7 @@ SELFREP_PREDICATES = {
     "t2d": (F.SELFREP_T2D,),
     "t1d": (F.SELFREP_T1D,),
     "diabetes_unspec": (F.SELFREP_DIABETES_UNSPEC,),
+    "diabetes_any": F.SELFREP_DIABETES_ANY,
     "osteoporosis": (F.SELFREP_OSTEOPOROSIS,),
 }
 MED_PREDICATES = {
@@ -96,16 +98,39 @@ def align(frame: pd.DataFrame, index: pd.Index) -> pd.DataFrame:
     return frame.reindex(index, fill_value=False).fillna(False)
 
 
-def build_labels(singles: pd.DataFrame, icd: pd.DataFrame, selfrep: pd.DataFrame,
-                 meds: pd.DataFrame, chol: pd.Series,
-                 vat: pd.Series, tscore: pd.Series) -> dict[str, pd.Series]:
+def quantitative_labels(singles: pd.DataFrame, chol: pd.Series,
+                        vat: pd.Series) -> dict[str, pd.Series]:
     mode, tail = config.QUANT_LABEL_MODE, F.EXTREME_TAIL_FRAC
-    sbp = S.mean_of_readings(singles, F.SBP_AUTO, F.SBP_MANUAL)
-    dbp = S.mean_of_readings(singles, F.DBP_AUTO, F.DBP_MANUAL)
     return {
         "Cholesterol": T.quantitative(chol, mode, tail),
         "Height": T.quantitative(singles[F.HEIGHT], mode, tail),
         "VAT": T.quantitative(vat, mode, tail),
+    }
+
+
+def hpp_labels(singles: pd.DataFrame, icd: pd.DataFrame, selfrep: pd.DataFrame,
+               femur_bmd: pd.Series, osteo_def: str) -> dict[str, pd.Series]:
+    """Disease labels per Ning's 2026-11-02 HPP mapping (ukb_traits_hpp.py)."""
+    return {
+        "Obesity": H.obesity(singles[F.BMI]),
+        "Hyperlipidemia": H.hyperlipidemia(
+            icd["hyperlipidemia"], selfrep["high_cholesterol"]),
+        "Hypertension": H.hypertension(icd["hypertension"], selfrep["hypertension"]),
+        "T2D": H.type_2_diabetes(icd["t2d"], selfrep["diabetes_any"],
+                                 singles[F.DIABETES_SELFREP]),
+        "Osteoporosis": H.osteoporosis(
+            femur_bmd, icd["osteoporosis"], selfrep["osteoporosis"], osteo_def),
+    }
+
+
+def build_labels(singles: pd.DataFrame, icd: pd.DataFrame, selfrep: pd.DataFrame,
+                 meds: pd.DataFrame, chol: pd.Series,
+                 vat: pd.Series, tscore: pd.Series) -> dict[str, pd.Series]:
+    """Labels under the paper reading of the Methods (ukb_traits.py)."""
+    sbp = S.mean_of_readings(singles, F.SBP_AUTO, F.SBP_MANUAL)
+    dbp = S.mean_of_readings(singles, F.DBP_AUTO, F.DBP_MANUAL)
+    return {
+        **quantitative_labels(singles, chol, vat),
         "Obesity": T.obesity(singles[F.BMI]),
         "Hyperlipidemia": T.hyperlipidemia(
             chol, icd["hyperlipidemia"], selfrep["high_cholesterol"],
@@ -169,6 +194,26 @@ class CohortInputs(NamedTuple):
     vat: pd.Series
     tscore: pd.Series
     covariates: pd.DataFrame
+    femur_bmd: pd.Series | None = None   # loaded only for label sets that use it
+
+
+def check_label_settings() -> None:
+    """Fail before reading anything if the label settings are unknown."""
+    if config.LABEL_DEFS not in config.LABEL_DEFS_CHOICES:
+        raise SystemExit(f"UKBV_LABEL_DEFS={config.LABEL_DEFS!r}; expected one "
+                         f"of {config.LABEL_DEFS_CHOICES}")
+    if config.OSTEO_DEF not in config.OSTEO_DEF_CHOICES:
+        raise SystemExit(f"UKBV_OSTEO_DEF={config.OSTEO_DEF!r}; expected one "
+                         f"of {config.OSTEO_DEF_CHOICES}")
+
+
+def load_femur_bmd(index: pd.Index) -> pd.Series:
+    """Lower of left/right total femur BMD (g/cm2); exact zeros are missing."""
+    left, right = S.femur_bmd_columns(S.column_names(config.UKB_DXA_PARQUET))
+    print(f"  total femur BMD columns: {left}, {right}")
+    bmd = S.read_columns(config.UKB_DXA_PARQUET, [left, right])
+    bmd = S.mask_zeros_as_missing(bmd, [left, right])
+    return S.lowest_across_sites(bmd, [left, right]).reindex(index)
 
 
 def load_inputs() -> CohortInputs:
@@ -209,18 +254,33 @@ def load_inputs() -> CohortInputs:
     unexpected = set(covariates["sex"].dropna().unique()) - {0, 1}
     if unexpected:
         raise ValueError(f"unexpected sex coding in {F.SEX}: {unexpected}")
-    return CohortInputs(singles, icd, selfrep, meds, chol, vat, tscore, covariates)
+    femur_bmd = None
+    if config.LABEL_DEFS == "hpp_1102":
+        print("reading total femur BMD")
+        femur_bmd = load_femur_bmd(singles.index)
+    return CohortInputs(singles, icd, selfrep, meds, chol, vat, tscore,
+                        covariates, femur_bmd)
 
 
 def labels_for(inputs: CohortInputs) -> dict[str, pd.Series]:
-    return build_labels(inputs.singles, inputs.icd, inputs.selfrep, inputs.meds,
-                        inputs.chol, inputs.vat, inputs.tscore)
+    """Every trait's labels under config.LABEL_DEFS."""
+    if config.LABEL_DEFS == "paper":
+        return build_labels(inputs.singles, inputs.icd, inputs.selfrep,
+                            inputs.meds, inputs.chol, inputs.vat, inputs.tscore)
+    return {
+        **quantitative_labels(inputs.singles, inputs.chol, inputs.vat),
+        **hpp_labels(inputs.singles, inputs.icd, inputs.selfrep,
+                     inputs.femur_bmd, config.OSTEO_DEF),
+    }
 
 
 def main() -> None:
+    check_label_settings()
     os.makedirs(config.COHORT_DIR, exist_ok=True)
     inputs = load_inputs()
-    print(f"labelling traits (quantitative mode: {config.QUANT_LABEL_MODE})")
+    print(f"labelling traits (label set: {config.LABEL_DEFS}, osteoporosis: "
+          f"{config.OSTEO_DEF}, quantitative mode: {config.QUANT_LABEL_MODE}) "
+          f"-> {config.COHORT_DIR}")
     labels = labels_for(inputs)
     for trait in config.TRAITS:
         write_cohorts(trait, labels[trait], inputs.covariates)

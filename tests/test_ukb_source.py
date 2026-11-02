@@ -63,3 +63,18 @@ def test_lowest_across_sites_skips_unmeasured_sites():
 def test_lowest_across_sites_rejects_a_missing_column():
     with pytest.raises(KeyError, match="not_here"):
         S.lowest_across_sites(pd.DataFrame({"a": [1.0]}), ["a", "not_here"])
+
+
+@pytest.mark.unit
+def test_femur_bmd_columns_picks_total_femur_left_and_right():
+    names = ["eid", "femur_total_bmd_left_i2", "femur_total_bmd_right_i2",
+             "femur_total_bmd_t_score_left_i2", "femur_neck_bmd_left_i2",
+             "femur_total_bmd_left_i3", "femur_total_bmc_right_i2"]
+    assert S.femur_bmd_columns(names) == (
+        "femur_total_bmd_left_i2", "femur_total_bmd_right_i2")
+
+
+@pytest.mark.unit
+def test_femur_bmd_columns_fails_listing_femur_columns():
+    with pytest.raises(KeyError, match="femur_neck_bmd_left_i2"):
+        S.femur_bmd_columns(["eid", "femur_neck_bmd_left_i2"])
