@@ -28,7 +28,7 @@ import hashlib
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +43,8 @@ from build_cohorts import load_qc_ids
 TABULAR = (".parquet", ".csv", ".tsv", ".txt", ".csv.gz", ".tsv.gz")
 DICTIONARY_HINTS = ("dictionary", "showcase")
 MAX_TEXT_BYTES = 4 << 30   # text tables larger than this are not parsed
-COLUMNS_PER_BATCH = 64
+COLUMNS_PER_BATCH = 64     # parquet: columnar reads, so many small batches
+HEARTBEAT_SECONDS = 60
 FMGWAS_TRAITS = tuple(config.TRAITS)
 
 _QC_IDS: np.ndarray | None = None
@@ -154,7 +155,9 @@ def plan_batches(path: Path, names: list[str], id_column: str,
             continue
         batch.append((field, columns))
         width += len(columns)
-        if width >= COLUMNS_PER_BATCH:
+        # A text table is parsed whole on every read, so it is one batch:
+        # one read per file, not one per 64 columns.
+        if width >= COLUMNS_PER_BATCH and path.suffix == ".parquet":
             tasks.append((str(path), id_column, batch))
             batch, width = [], 0
     if batch:
@@ -220,12 +223,40 @@ def assemble(records: list[dict], out: Path, people: pd.DataFrame) -> pd.DataFra
                          **{k: rec.get(k) for k in ("path", "field", "title", "instance",
                                                     "kind", "n", "n_minor", "value_type")}))
     catalog = pd.DataFrame(kept)
+    log(f"writing {len(columns):,} traits x {len(people):,} participants")
     np.save(out / "trait_values.npy", np.column_stack(columns) if columns
             else np.empty((len(people), 0)))
     catalog.to_csv(out / "trait_catalog.tsv", sep="\t", index=False)
     pd.DataFrame(skipped).to_csv(out / "trait_skipped.tsv", sep="\t", index=False)
     people.to_csv(out / "participants.tsv", sep="\t", index=False)
     return catalog
+
+
+def run_tasks(tasks: list[tuple], ids: np.ndarray, dictionary: dict,
+              workers: int) -> list[dict]:
+    """Scan every batch in parallel. Progress counts batches as they finish, in
+    any order, and a heartbeat names the files still being read, so one slow
+    table never looks like a hang."""
+    records: list[dict] = []
+    start, done = time.monotonic(), 0
+    with ProcessPoolExecutor(workers, initializer=_init,
+                             initargs=(ids, dictionary)) as pool:
+        running = {pool.submit(scan_batch, task): task[0] for task in tasks}
+        while running:
+            finished, _ = wait(running, timeout=HEARTBEAT_SECONDS,
+                               return_when=FIRST_COMPLETED)
+            for future in finished:
+                running.pop(future)
+                records.extend(future.result())
+                done += 1
+            elapsed = time.monotonic() - start
+            eta = elapsed / done * (len(tasks) - done) if done else float("nan")
+            if finished and done % 10 and done != len(tasks):
+                continue
+            busy = sorted({Path(p).name for p in list(running.values())[:workers]})
+            log(f"[ETA] traits: batch {done}/{len(tasks)}, elapsed {elapsed / 60:.1f} min, "
+                f"ETA {eta / 60:.1f} min" + (f"; reading {', '.join(busy[:4])}" if busy else ""))
+    return records
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -272,14 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         tasks.extend(file_tasks)
 
     records = fmgwas_records(Path(args.cohort_dir), ids)
-    start = time.monotonic()
-    with ProcessPoolExecutor(args.workers, initializer=_init,
-                             initargs=(ids, dictionary)) as pool:
-        for k, batch in enumerate(pool.map(scan_batch, tasks), 1):
-            records.extend(batch)
-            if k % 10 == 0 or k == len(tasks):
-                rate = (time.monotonic() - start) / k
-                log(f"[ETA] traits: batch {k}/{len(tasks)}, ETA {rate * (len(tasks) - k) / 60:.1f} min")
+    records.extend(run_tasks(tasks, ids, dictionary, args.workers))
+    log(f"assembling {len(records):,} field records (dedup + writing trait_values.npy)")
     catalog = assemble(records + skipped, out, people)
     counts = catalog.kind.value_counts().to_dict() if len(catalog) else {}
     log(f"{len(catalog)} traits kept {counts}; catalog -> {out / 'trait_catalog.tsv'}")
