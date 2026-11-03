@@ -74,6 +74,18 @@ def load_cache(cache: Path, gene: str) -> tuple[dict[str, tuple], dict]:
     return by_sex, meta
 
 
+def is_current(cache: Path, gene: str) -> bool:
+    """Done in the per-sex layout. A file from the earlier all-participant
+    layout (no "sexes" key) is rebuilt, never silently skipped."""
+    json_path = cache_paths(cache, gene)[1]
+    if not json_path.exists():
+        return False
+    try:
+        return "sexes" in json.loads(json_path.read_text())
+    except (OSError, ValueError):
+        return False
+
+
 def feature_dirs(feature_root: Path) -> dict[str, str]:
     """Unversioned gene id -> feature directory name (versions differ by release)."""
     return {entry.name.split(".")[0]: entry.name
@@ -158,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     dirs = feature_dirs(Path(args.feature_root))
     start, done = time.monotonic(), 0
     for number, gene in enumerate(genes, 1):
-        if cache_paths(cache, gene)[1].exists():
+        if is_current(cache, gene):
             continue
         t0 = time.monotonic()
         try:
