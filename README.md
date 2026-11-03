@@ -80,6 +80,31 @@ participant's reference sequence and two haplotype sequences.
 - **Memory:** sequences are streamed to disk one participant at a time
   (`gene_seq_writer.py`), so peak memory does not grow with cohort size.
 
+### Gene x trait scan (Ning, 2026-11-03)
+
+`ning_nov03b.sh` tests the 170 genes of `novel_genes_id_1103.tsv` against
+every trait the UKB phenotype directory offers, in All, F and M, on all 60
+embeddings (F test for quantitative traits, logistic LRT for binary ones).
+
+- **Traits.** `trait_scan.py` walks `UKBV_PHENO_DIR` recursively and runs
+  every field of every table with a participant id through `trait_rules.py`:
+  multi-select code fields, administrative/genetic/registry fields, text and
+  dates are skipped; repeated readings are averaged; UKB "do not know" codes
+  become missing; two levels make a binary trait, ten or more a quantitative
+  one; exact duplicates are dropped. A UKB Showcase data dictionary, if one is
+  found, overrides the value-based guess. The 8 FM-GWAS traits come from the
+  hpp_1103 scheme-1 cohort tables. `trait_catalog.tsv` and
+  `trait_skipped.tsv` record every decision.
+- **PCA once.** `gene_pca_cache.py` fits the script's own 95%-variance PCA
+  once per gene and embedding, on all scan participants, and saves the scores.
+  `gene_scan.py` reuses them in every cell, with the script's own F and LRT
+  code. With the full cohort as the cell this gives the script's p-values
+  exactly (`tests/test_gene_scan.py`); in sex and trait subsets the PCA is the
+  full-sample one rather than a refit.
+- **Output.** `summarize_gene_scan.py` writes one row per gene x trait x sex
+  (`gene_trait_scan.tsv`, minimum p over the 60 embeddings) and the cells at
+  p < 2.5e-6 (`gene_trait_scan.hits.tsv`).
+
 ### 4. Cohorts
 
 `build_cohorts.py` builds one cohort table for every trait and sex (24
