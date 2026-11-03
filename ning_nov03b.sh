@@ -87,6 +87,9 @@ run_ranks() {
     log "$name: $n rank(s) x $threads thread(s); logs in ${RUN}/logs/${name}.rank*.log"
     local t0 done0
     t0=$(date +%s); done0=$("$count_fn")
+    # For `bash ning_nov03b.sh eta` from another shell: this run's start and
+    # how much was already done, so its rate counts only this run's work.
+    printf '%s %s %s\n' "$t0" "$done0" "$total" > "${RUN}/.${name}_progress"
     for (( k = 0; k < n; k++ )); do
         OMP_NUM_THREADS="$threads" OPENBLAS_NUM_THREADS="$threads" \
         MKL_NUM_THREADS="$threads" NUMEXPR_NUM_THREADS="$threads" \
@@ -152,7 +155,6 @@ stage_pca() {
 
 stage_scan() {
     mkdir -p "$RUN"
-    [[ -f "${RUN}/.scan_started" ]] || date +%s > "${RUN}/.scan_started"
     log "scan: $(n_traits) traits x 3 sexes x $(n_genes) genes x 60 embeddings" \
         "= $(n_parts) parts of $TRAITS_PER_PART traits"
     run_ranks "$SCAN_THREADS" scan "$(n_parts)" count_scan "${ASSOC_PY}" gene_scan.py \
@@ -165,11 +167,22 @@ stage_summary() {
         --catalog "${SCAN_DIR}/trait_catalog.tsv" || die "summary failed"
 }
 
-# Progress of a scan running in another shell, from the files on disk.
+# Progress of whichever stage is running in another shell, from the files on
+# disk and the start marker run_ranks leaves (newest of scan/pca, else traits).
 stage_eta() {
-    local t0
-    t0=$(cat "${RUN}/.scan_started" 2>/dev/null) || die "no scan started yet"
-    progress_line scan "$(count_scan)" "$(n_parts)" 0 "$t0"
+    local marker name t0 done0 total
+    # Newest marker first: a rerun's pca stage is not hidden by an old scan one.
+    for marker in $(ls -t "${RUN}/.scan_progress" "${RUN}/.pca_progress" 2>/dev/null); do
+        name="$(basename "$marker" _progress)"; name="${name#.}"
+        read -r t0 done0 total < "$marker"
+        progress_line "$name" "$("count_$name")" "$total" "$done0" "$t0"
+        return 0
+    done
+    if [[ -f "${SCAN_DIR}/trait_catalog.tsv" ]]; then
+        log "traits done ($(n_traits)); pca not started yet"
+    else
+        log "traits stage running (or not started): its [ETA] lines are in its own terminal"
+    fi
 }
 
 STAGE="${1:-all}"
