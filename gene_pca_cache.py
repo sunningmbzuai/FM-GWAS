@@ -3,16 +3,17 @@
 For every gene and every one of the 60 embedding types, the vendored FM-GWAS
 script's own PCA (fmgwas/insample_hpp_AG.py: standardize, exact Gram
 eigendecomposition, keep components up to 95% of the variance) is fitted once
-on the scan participants (trait_scan.py's participants.tsv, intersected with
-the gene's feature table). gene_scan.py then reuses these scores for every
-trait and sex, instead of refitting the PCA in each cell as run_assoc.sh does.
+per sex sample: All, F only and M only, each from trait_scan.py's
+participants.tsv intersected with the gene's feature table. gene_scan.py then
+reuses each sample's scores for every trait in that sex, instead of refitting
+the PCA in each trait cell as run_assoc.sh does.
 
 Array genotypes leave each gene with few distinct embedding rows, so the scores
 are stored as their distinct rows plus a per-participant index; scores =
 rows[index] exactly.
 
-    <cache>/<gene>.npz   participant_id, <embed>__rows, <embed>__index
-    <cache>/<gene>.json  components and explained variance per embedding
+    <cache>/<gene>.npz   <sex>__participant_id, <sex>__<embed>__rows, <sex>__<embed>__index
+    <cache>/<gene>.json  per sex: components and explained variance per embedding
 
     python gene_pca_cache.py --genes genes.tsv --participants participants.tsv \
         --feature-root feature_tables --cache DIR [--rank 0 --world-size 8]
@@ -33,6 +34,7 @@ import pandas as pd
 
 import assoc_settings
 
+SEXES = (("All", None), ("F", 0), ("M", 1))   # FM-GWAS coding: F=0, M=1
 HERE = Path(__file__).resolve().parent
 FMGWAS_SCRIPT = HERE / "fmgwas" / "insample_hpp_AG.py"
 
@@ -59,14 +61,17 @@ def compress_rows(scores: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rows, index.reshape(-1).astype(np.int32)
 
 
-def load_cache(cache: Path, gene: str) -> tuple[np.ndarray, dict[str, np.ndarray], dict]:
-    """(participant ids, {embed: N x k scores}, meta) of one cached gene."""
+def load_cache(cache: Path, gene: str) -> tuple[dict[str, tuple], dict]:
+    """({sex: (participant ids, {embed: N x k scores})}, meta) of one cached gene."""
     npz_path, json_path = cache_paths(cache, gene)
     meta = json.loads(json_path.read_text())
+    by_sex = {}
     with np.load(npz_path) as data:
-        ids = data["participant_id"]
-        scores = {e: data[f"{e}__rows"][data[f"{e}__index"]] for e in meta["embeddings"]}
-    return ids, scores, meta
+        for sex, info in meta.get("sexes", {}).items():
+            scores = {e: data[f"{sex}__{e}__rows"][data[f"{sex}__{e}__index"]]
+                      for e in info["embeddings"]}
+            by_sex[sex] = (data[f"{sex}__participant_id"], scores)
+    return by_sex, meta
 
 
 def feature_dirs(feature_root: Path) -> dict[str, str]:
@@ -75,33 +80,51 @@ def feature_dirs(feature_root: Path) -> dict[str, str]:
             for entry in os.scandir(feature_root) if entry.is_dir()}
 
 
-def build_gene(fm: ModuleType, gene: str, feature_root: Path, wanted: np.ndarray,
+def fit_sample(fm: ModuleType, matrices: dict[str, np.ndarray], rows: np.ndarray,
+               config: dict) -> tuple[dict[str, np.ndarray], dict]:
+    """PCA of every embedding on one participant sample (rows of the feature table)."""
+    arrays: dict[str, np.ndarray] = {}
+    info: dict = dict(n_samples=int(len(rows)), embeddings=[], components={},
+                      explained_variance={}, input_features={}, failed={})
+    for embed, matrix in matrices.items():
+        try:
+            scores, fit = fm.fit_pca(matrix[rows], config)
+        except (ValueError, np.linalg.LinAlgError) as error:
+            info["failed"][embed] = str(error)
+            continue
+        arrays[f"{embed}__rows"], arrays[f"{embed}__index"] = compress_rows(scores)
+        info["embeddings"].append(embed)
+        info["components"][embed] = int(fit["n_components"])
+        info["explained_variance"][embed] = float(fit["explained_variance"])
+        info["input_features"][embed] = int(fit["input_features"])
+    return arrays, info
+
+
+def build_gene(fm: ModuleType, gene: str, feature_root: Path, people: pd.DataFrame,
                embeds: list[str], pca_spec: str,
                dirs: dict[str, str]) -> tuple[dict[str, np.ndarray], dict]:
+    """One PCA per sex sample (All, F, M), each on that sample's participants only."""
     folder = dirs.get(gene.split(".")[0])
     if folder is None:
         raise ValueError("no feature table (untestable in UKB or not embedded)")
     ids, matrices = fm.load_gene(fm.locate_features(feature_root, folder), embeds)
-    keep = np.isin(ids, wanted)
-    if keep.sum() < 3:
-        raise ValueError(f"{int(keep.sum())} scan participants have features")
+    sex_of = dict(zip(people.participant_id.astype(np.int64), people.sex.astype(int)))
     config = fm.parse_pca(pca_spec)
-    arrays: dict[str, np.ndarray] = {"participant_id": ids[keep].astype(np.int64)}
-    meta: dict = dict(gene_id=gene, feature_dir=folder, gene_pca=pca_spec, n_samples=int(keep.sum()),
-                      embeddings=[], components={}, explained_variance={},
-                      input_features={}, failed={})
-    for embed in embeds:
-        try:
-            scores, info = fm.fit_pca(matrices[embed][keep], config)
-        except (ValueError, np.linalg.LinAlgError) as error:
-            meta["failed"][embed] = str(error)
+    arrays: dict[str, np.ndarray] = {}
+    meta: dict = dict(gene_id=gene, feature_dir=folder, gene_pca=pca_spec, sexes={})
+    for sex, code in SEXES:
+        rows = np.array([i for i, p in enumerate(ids)
+                         if int(p) in sex_of and (code is None or sex_of[int(p)] == code)],
+                        dtype=np.int64)
+        if len(rows) < 3:
+            log(f"[warn] {gene} {sex}: {len(rows)} participants with features, no PCA")
             continue
-        rows, index = compress_rows(scores)
-        arrays[f"{embed}__rows"], arrays[f"{embed}__index"] = rows, index
-        meta["embeddings"].append(embed)
-        meta["components"][embed] = int(info["n_components"])
-        meta["explained_variance"][embed] = float(info["explained_variance"])
-        meta["input_features"][embed] = int(info["input_features"])
+        sex_arrays, info = fit_sample(fm, matrices, rows, config)
+        arrays[f"{sex}__participant_id"] = ids[rows].astype(np.int64)
+        arrays.update({f"{sex}__{k}": v for k, v in sex_arrays.items()})
+        meta["sexes"][sex] = info
+    if not meta["sexes"]:
+        raise ValueError("fewer than 3 scan participants have features")
     return arrays, meta
 
 
@@ -128,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
 
     fm = fmgwas()
     genes = fm.read_genes(args.genes)[args.rank::args.world_size]
-    wanted = pd.read_csv(args.participants, sep="\t").participant_id.to_numpy(np.int64)
+    people = pd.read_csv(args.participants, sep="\t")
     cache = Path(args.cache)
     cache.mkdir(parents=True, exist_ok=True)
     embeds = list(assoc_settings.ALL_VIEWS)
@@ -139,18 +162,17 @@ def main(argv: list[str] | None = None) -> int:
             continue
         t0 = time.monotonic()
         try:
-            arrays, meta = build_gene(fm, gene, Path(args.feature_root), wanted,
+            arrays, meta = build_gene(fm, gene, Path(args.feature_root), people,
                                       embeds, args.gene_pca, dirs)
         except (ValueError, KeyError, OSError) as error:
             log(f"[FAILED] {gene}: {error}")
-            write_gene(cache, gene, {"participant_id": np.empty(0, np.int64)},
-                       dict(gene_id=gene, embeddings=[], error=str(error)))
+            write_gene(cache, gene, {}, dict(gene_id=gene, sexes={}, error=str(error)))
             continue
         done += 1
         eta = (time.monotonic() - start) / done * (len(genes) - number)
-        log(f"[{number}/{len(genes)}] {gene}: {len(meta['embeddings'])} embeddings, "
-            f"k {min(meta['components'].values(), default=0)}-"
-            f"{max(meta['components'].values(), default=0)}, "
+        ks = [k for info in meta["sexes"].values() for k in info["components"].values()]
+        log(f"[{number}/{len(genes)}] {gene}: PCA for {', '.join(meta['sexes'])}, "
+            f"k {min(ks, default=0)}-{max(ks, default=0)}, "
             f"{time.monotonic() - t0:.0f}s, ETA {eta / 60:.1f} min")
         write_gene(cache, gene, arrays, meta)
     return 0

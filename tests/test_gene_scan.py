@@ -1,9 +1,9 @@
 """gene_pca_cache.py + gene_scan.py against the vendored FM-GWAS script.
 
-When a cell's cohort is exactly the PCA fit sample (the full cohort, every
-participant measured), fitting the PCA once and reusing it is the same model
-the script fits inside the cell, so the p-values must agree with a plain
-`insample_hpp_AG.py run`.
+The PCA is fitted once per sex sample (All, F, M). When a cell's cohort is
+exactly that sample (every participant measured), this is the model the script
+fits inside the cell, so the p-values must agree with a plain
+`insample_hpp_AG.py run` in every sex.
 """
 import subprocess
 import sys
@@ -69,8 +69,13 @@ def world(tmp_path_factory):
     cache, out = tmp / "cache", tmp / "out"
     C.main(["--genes", str(genes), "--participants", str(scan / "participants.tsv"),
             "--feature-root", str(feature_root), "--cache", str(cache)])
-    G.main(["--scan", str(scan), "--cache", str(cache), "--genes", str(genes),
-            "--out", str(out)])
+    floor = G.MIN_CELL_N
+    G.MIN_CELL_N = 100   # N=600 leaves ~300 per sex, under the production floor
+    try:
+        G.main(["--scan", str(scan), "--cache", str(cache), "--genes", str(genes),
+                "--out", str(out)])
+    finally:
+        G.MIN_CELL_N = floor
     return dict(tmp=tmp, feature_root=feature_root, genes=genes, cache=cache, out=out,
                 data=data)
 
@@ -78,16 +83,21 @@ def world(tmp_path_factory):
 @pytest.mark.integration
 def test_cache_rebuilds_the_scripts_pca_scores_exactly(world):
     fm = C.fmgwas()
-    ids, scores, meta = C.load_cache(world["cache"], GENE)
+    by_sex, meta = C.load_cache(world["cache"], GENE)
     assert meta["feature_dir"] == "ENSG00000000001.9"
-    assert len(scores) == 60
-    _, matrices = fm.load_gene(
+    assert sorted(by_sex) == ["All", "F", "M"]
+    all_ids, matrices = fm.load_gene(
         world["feature_root"] / "ENSG00000000001.9" / "ENSG00000000001.9.npz",
         ["concat_cage_dnase", "add_tss_rnaseq"])
-    for embed, matrix in matrices.items():
-        expected, info = fm.fit_pca(matrix, fm.parse_pca("variance:0.95"))
-        assert np.array_equal(scores[embed], expected)
-        assert meta["components"][embed] == info["n_components"]
+    sex = pd.read_csv(world["tmp"] / "traits" / "participants.tsv", sep="\t").sex.to_numpy()
+    for name, rows in (("All", sex >= 0), ("F", sex == 0), ("M", sex == 1)):
+        ids, scores = by_sex[name]
+        assert np.array_equal(ids, all_ids[rows])
+        assert len(scores) == 60
+        for embed, matrix in matrices.items():
+            expected, info = fm.fit_pca(matrix[rows], fm.parse_pca("variance:0.95"))
+            assert np.array_equal(scores[embed], expected)
+            assert meta["sexes"][name]["components"][embed] == info["n_components"]
 
 
 def script_p(world, trait: str, test: str, sex: str = "All") -> pd.Series:
@@ -115,18 +125,12 @@ def scan_p(world, trait: str, sex: str = "All") -> pd.Series:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("sex", ["All", "F", "M"])
 @pytest.mark.parametrize("trait,test", [("q", "F"), ("b", "LRT")])
-def test_full_cohort_matches_the_vendored_script(world, trait, test):
-    expected, got = script_p(world, trait, test), scan_p(world, trait)
-    assert len(got) == 60
+def test_each_sex_matches_the_vendored_script(world, trait, test, sex):
+    expected, got = script_p(world, trait, test, sex), scan_p(world, trait, sex)
+    assert len(got) == 60 and got.notna().all()
     np.testing.assert_allclose(got.loc[expected.index], expected, rtol=1e-8)
-
-
-@pytest.mark.integration
-def test_every_sex_cell_is_tested(world):
-    for trait in ("q", "b"):
-        for sex in ("All", "F", "M"):
-            assert scan_p(world, trait, sex).notna().all()
 
 
 @pytest.mark.integration

@@ -9,7 +9,8 @@
 # curated labels (hpp_1103, scheme 1 for the diseases).
 #
 # As Ning suggested, each gene's PCA (variance 0.95) is fitted once and saved
-# (gene_pca_cache.py), then reused for every trait and sex (gene_scan.py).
+# (gene_pca_cache.py) -- separately for All, F and M -- then reused for every
+# trait of that sex (gene_scan.py).
 #
 #   bash ning_nov03b.sh genes     # gene list + features check (no GPU stage)
 #   bash ning_nov03b.sh traits    # deep scan -> trait catalog + values

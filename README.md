@@ -95,12 +95,14 @@ embeddings (F test for quantitative traits, logistic LRT for binary ones).
   found, overrides the value-based guess. The 8 FM-GWAS traits come from the
   hpp_1103 scheme-1 cohort tables. `trait_catalog.tsv` and
   `trait_skipped.tsv` record every decision.
-- **PCA once.** `gene_pca_cache.py` fits the script's own 95%-variance PCA
-  once per gene and embedding, on all scan participants, and saves the scores.
-  `gene_scan.py` reuses them in every cell, with the script's own F and LRT
-  code. With the full cohort as the cell this gives the script's p-values
-  exactly (`tests/test_gene_scan.py`); in sex and trait subsets the PCA is the
-  full-sample one rather than a refit.
+- **PCA once per sex.** `gene_pca_cache.py` fits the script's own
+  95%-variance PCA once per gene, embedding and sex sample (All, F only, M
+  only) and saves the scores. `gene_scan.py` reuses each sex's scores for
+  every trait in that sex, with the script's own F and LRT code. When a cell
+  holds the whole sex sample this gives the script's p-values exactly, in All,
+  F and M (`tests/test_gene_scan.py`); when a trait is measured on fewer
+  people, the PCA is the sex sample's rather than a refit on that trait's
+  participants.
 - **Output.** `summarize_gene_scan.py` writes one row per gene x trait x sex
   (`gene_trait_scan.tsv`, minimum p over the 60 embeddings) and the cells at
   p < 2.5e-6 (`gene_trait_scan.hits.tsv`).

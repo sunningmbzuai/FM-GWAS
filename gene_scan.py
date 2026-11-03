@@ -6,8 +6,8 @@ script's own (fmgwas/insample_hpp_AG.analytic_tests): partial F for
 quantitative traits, logistic LRT for binary ones, reduced model = intercept +
 standardized age and sex (age only in single-sex cells), full model = reduced +
 the gene's PCA scores. The only change from run_assoc.sh is the one Ning asked
-for: the PCA is fitted once per gene (on all scan participants) and reused,
-not refitted inside each cell.
+for: the PCA is fitted once per gene and sex sample (All, F, M) and reused
+for every trait of that sex, not refitted inside each trait cell.
 
 Work is checkpointed per gene and block of traits:
     <out>/per_gene/<gene>/part<k>.tsv.gz
@@ -28,9 +28,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from gene_pca_cache import fmgwas, load_cache
+from gene_pca_cache import SEXES, fmgwas, load_cache
 
-SEXES = (("All", None), ("F", 0), ("M", 1))
 MIN_CELL_N = 500
 MIN_CELL_MINOR = 20
 LRT_ARGS = SimpleNamespace(lrt_max_iter=100, lrt_tol=1e-10)
@@ -98,11 +97,20 @@ def test_cell(fm, gene: str, trait: pd.Series, sex: str, cell: dict,
     return out
 
 
-def run_part(fm, scan: Scan, gene: str, traits: pd.DataFrame, gene_pos: np.ndarray,
-             scores: dict, components: dict) -> pd.DataFrame:
+def positions(scan: Scan, ids: np.ndarray) -> np.ndarray:
+    """Row of each scan participant in a cached sample, -1 when absent."""
+    pos = {int(p): i for i, p in enumerate(ids)}
+    return np.array([pos.get(int(p), -1) for p in scan.people.participant_id], np.int64)
+
+
+def run_part(fm, scan: Scan, gene: str, traits: pd.DataFrame, samples: dict) -> pd.DataFrame:
+    """samples: {sex: (gene_pos, scores, components)} -- each sex its own PCA."""
     rows: list[dict] = []
     for _, trait in traits.iterrows():
         for sex, code in SEXES:
+            if sex not in samples:
+                continue
+            gene_pos, scores, components = samples[sex]
             cell = cell_design(fm, scan, int(trait.column), code, gene_pos)
             if cell is None:
                 continue
@@ -123,17 +131,15 @@ def scan_gene(fm, scan: Scan, cache: Path, gene: str, out: Path, part_size: int)
     todo = [k for k in range(len(parts)) if not (gene_dir / f"part{k}.tsv.gz").exists()]
     if not todo:
         return 0
-    ids, scores, meta = load_cache(cache, gene)
-    if not scores:
+    by_sex, meta = load_cache(cache, gene)
+    if not by_sex:
         log(f"[FAILED] {gene}: no cached PCA ({meta.get('error', 'no embeddings')})")
         return 0
-    pos = {int(p): i for i, p in enumerate(ids)}
-    gene_pos = np.array([pos.get(int(p), -1) for p in scan.people.participant_id], np.int64)
+    samples = {sex: (positions(scan, ids), scores, meta["sexes"][sex]["components"])
+               for sex, (ids, scores) in by_sex.items()}
     gene_dir.mkdir(parents=True, exist_ok=True)
     for k in todo:
-        atomic_tsv_gz(gene_dir / f"part{k}.tsv.gz",
-                      run_part(fm, scan, gene, parts[k], gene_pos, scores,
-                               meta["components"]))
+        atomic_tsv_gz(gene_dir / f"part{k}.tsv.gz", run_part(fm, scan, gene, parts[k], samples))
     return len(todo)
 
 
