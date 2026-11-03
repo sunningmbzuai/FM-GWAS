@@ -59,3 +59,36 @@ def test_osteoporosis_diagnosis_option_ignores_bmd():
 def test_osteoporosis_rejects_unknown_option():
     with pytest.raises(ValueError, match="osteoporosis option"):
         H.osteoporosis(pd.Series(dtype=float), flags(), flags(), "tscore")
+
+
+# ---- hpp_1103: Ning's 2026-11-03 correction, controls from the "control" class only
+
+
+@pytest.mark.unit
+def test_scheme_cases_icd_selfrep_and_icd_only():
+    assert H.scheme_cases(flags([1]), flags([2]), "icd_selfrep").to_dict() == \
+        {1: True, 2: True, 3: False, 4: False, 5: False}
+    assert H.scheme_cases(flags([1]), flags([2]), "icd_only").to_dict() == \
+        {1: True, 2: False, 3: False, 4: False, 5: False}
+
+
+@pytest.mark.unit
+def test_scheme_cases_rejects_unknown_scheme():
+    with pytest.raises(ValueError, match="case scheme"):
+        H.scheme_cases(flags(), flags(), "icd_meds")
+
+
+@pytest.mark.unit
+def test_case_or_paper_control_drops_every_other_non_case():
+    # paper label: 1 ICD case, 2 medication-only case, 3 control, 4 control,
+    # 5 not assessable (absent from the paper labels)
+    paper = pd.Series({1: 1, 2: 1, 3: 0, 4: 0})
+    label = H.case_or_paper_control(flags([1]), paper)
+    assert label.to_dict() == {1: 1, 3: 0, 4: 0}
+
+
+@pytest.mark.unit
+def test_case_or_paper_control_refuses_a_case_that_was_a_paper_control():
+    paper = pd.Series({1: 0, 2: 0})
+    with pytest.raises(ValueError, match="paper control"):
+        H.case_or_paper_control(flags([1]), paper)

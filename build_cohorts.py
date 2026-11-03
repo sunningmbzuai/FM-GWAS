@@ -123,6 +123,26 @@ def hpp_labels(singles: pd.DataFrame, icd: pd.DataFrame, selfrep: pd.DataFrame,
     }
 
 
+def hpp1103_labels(icd: pd.DataFrame, selfrep: pd.DataFrame, bmi: pd.Series,
+                   paper: dict[str, pd.Series], scheme: str) -> dict[str, pd.Series]:
+    """Disease labels per Ning's 2026-11-03 correction (ukb_traits_hpp.py).
+
+    `paper` holds the paper-reading labels, whose controls are the only
+    controls kept.
+    """
+    def label(trait: str, icd_col: str, selfrep_col: str) -> pd.Series:
+        case = H.scheme_cases(icd[icd_col], selfrep[selfrep_col], scheme)
+        return H.case_or_paper_control(case, paper[trait])
+
+    return {
+        "Obesity": H.obesity(bmi),
+        "Hyperlipidemia": label("Hyperlipidemia", "hyperlipidemia", "high_cholesterol"),
+        "Hypertension": label("Hypertension", "hypertension", "hypertension"),
+        "Osteoporosis": label("Osteoporosis", "osteoporosis", "osteoporosis"),
+        "T2D": H.case_or_paper_control(icd["t2d"], paper["T2D"]),
+    }
+
+
 def build_labels(singles: pd.DataFrame, icd: pd.DataFrame, selfrep: pd.DataFrame,
                  meds: pd.DataFrame, chol: pd.Series,
                  vat: pd.Series, tscore: pd.Series) -> dict[str, pd.Series]:
@@ -205,6 +225,9 @@ def check_label_settings() -> None:
     if config.OSTEO_DEF not in config.OSTEO_DEF_CHOICES:
         raise SystemExit(f"UKBV_OSTEO_DEF={config.OSTEO_DEF!r}; expected one "
                          f"of {config.OSTEO_DEF_CHOICES}")
+    if config.CASE_SCHEME not in H.CASE_SCHEMES:
+        raise SystemExit(f"UKBV_CASE_SCHEME={config.CASE_SCHEME!r}; expected one "
+                         f"of {H.CASE_SCHEMES}")
 
 
 def load_femur_bmd(index: pd.Index) -> pd.Series:
@@ -264,9 +287,16 @@ def load_inputs() -> CohortInputs:
 
 def labels_for(inputs: CohortInputs) -> dict[str, pd.Series]:
     """Every trait's labels under config.LABEL_DEFS."""
+    paper = build_labels(inputs.singles, inputs.icd, inputs.selfrep,
+                         inputs.meds, inputs.chol, inputs.vat, inputs.tscore)
     if config.LABEL_DEFS == "paper":
-        return build_labels(inputs.singles, inputs.icd, inputs.selfrep,
-                            inputs.meds, inputs.chol, inputs.vat, inputs.tscore)
+        return paper
+    if config.LABEL_DEFS == "hpp_1103":
+        return {
+            **quantitative_labels(inputs.singles, inputs.chol, inputs.vat),
+            **hpp1103_labels(inputs.icd, inputs.selfrep, inputs.singles[F.BMI],
+                             paper, config.CASE_SCHEME),
+        }
     return {
         **quantitative_labels(inputs.singles, inputs.chol, inputs.vat),
         **hpp_labels(inputs.singles, inputs.icd, inputs.selfrep,
@@ -279,7 +309,7 @@ def main() -> None:
     os.makedirs(config.COHORT_DIR, exist_ok=True)
     inputs = load_inputs()
     print(f"labelling traits (label set: {config.LABEL_DEFS}, osteoporosis: "
-          f"{config.OSTEO_DEF}, quantitative mode: {config.QUANT_LABEL_MODE}) "
+          f"{config.OSTEO_DEF}, case scheme: {config.CASE_SCHEME}, quantitative mode: {config.QUANT_LABEL_MODE}) "
           f"-> {config.COHORT_DIR}")
     labels = labels_for(inputs)
     for trait in config.TRAITS:

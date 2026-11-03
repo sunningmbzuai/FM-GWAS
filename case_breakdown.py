@@ -14,6 +14,8 @@ rows). Writes, under OUT_ROOT/case_breakdown/:
 
     case_classes.tsv   trait, sex, class, n, % of cases, % of cohort
     case_rates.tsv     UKB vs HPP sample and case counts (hpp_cohort_sizes.tsv)
+    excluded_classes.tsv  (hpp_1103 only) paper-cohort participants the
+                       cohort leaves out, by their paper class
 
 Run with the microbiome env, like build_cohorts.py:
     python case_breakdown.py
@@ -160,9 +162,34 @@ def hpp_disease_tiers(inputs: B.CohortInputs) -> dict[str, Tiers]:
     }
 
 
+def hpp1103_disease_tiers(inputs: B.CohortInputs, scheme: str) -> dict[str, Tiers]:
+    """Class lists for the hpp_1103 label set (ukb_traits_hpp.py)."""
+    icd, selfrep = inputs.icd, inputs.selfrep
+
+    def classes(icd_name: str, icd_col: str, selfrep_name: str,
+                selfrep_col: str) -> Tiers:
+        tiers = [(icd_name, icd[icd_col])]
+        if scheme == "icd_selfrep":
+            tiers.append((selfrep_name, selfrep[selfrep_col]))
+        return tiers
+
+    return {
+        "Hyperlipidemia": classes("ICD-10 E78", "hyperlipidemia",
+                                  "self-reported high cholesterol", "high_cholesterol"),
+        "Hypertension": classes("ICD-10 I10-I15", "hypertension",
+                                "self-reported hypertension", "hypertension"),
+        "Obesity": obesity_tiers(inputs.singles[F.BMI]),
+        "Osteoporosis": classes("ICD-10 M80-M81", "osteoporosis",
+                                "self-reported osteoporosis", "osteoporosis"),
+        "T2D": [("ICD-10 E11", icd["t2d"])],
+    }
+
+
 def tiers_for(inputs: B.CohortInputs) -> dict[str, Tiers]:
     if config.LABEL_DEFS == "paper":
         return disease_tiers(inputs)
+    if config.LABEL_DEFS == "hpp_1103":
+        return hpp1103_disease_tiers(inputs, config.CASE_SCHEME)
     return hpp_disease_tiers(inputs)
 
 
@@ -170,7 +197,28 @@ def out_dir_name() -> str:
     """case_breakdown for the paper labels (as before), else per label set."""
     if config.LABEL_DEFS == "paper":
         return "case_breakdown"
+    if config.LABEL_DEFS == "hpp_1103":
+        return f"case_breakdown_hpp_1103_{config.CASE_SCHEME}"
     return f"case_breakdown_{config.LABEL_DEFS}_osteo_{config.OSTEO_DEF}"
+
+
+def excluded_rows(trait: str, sex: str, paper: pd.Series, new: pd.Series,
+                  paper_tiers: Tiers) -> list[dict]:
+    """Paper-cohort participants left out of the new cohort, by paper class.
+
+    Under hpp_1103 these are the non-cases outside the "control" class
+    (medication only, a measurement cutoff, ...), and, under icd_only, the
+    self-report-only cases.
+    """
+    excluded = paper.loc[paper.index.difference(new.index)]
+    classes = assign_classes(excluded, paper_tiers)
+    names = [name for name, _ in paper_tiers] + [UNCLASSIFIED, CONTROL]
+    counts = classes.value_counts()
+    return [{"trait": trait, "sex": sex, "class": name,
+             "n": int(counts.get(name, 0)),
+             "pct_of_excluded": (100 * counts.get(name, 0) / len(excluded)
+                                 if len(excluded) else float("nan"))}
+            for name in names if name in counts or name in dict(paper_tiers)]
 
 
 def cohort_labels(labels: pd.Series, covariates: pd.DataFrame,
@@ -193,6 +241,30 @@ def case_rates(ukb: pd.DataFrame, hpp: pd.DataFrame) -> pd.DataFrame:
                 "hpp_n", "hpp_cases", "hpp_case_pct", "ukb_over_hpp"]]
 
 
+# Traits whose hpp_1103 labels narrow the paper labels; Obesity is compared
+# with nothing, since its labels are the hpp_1102 ones.
+EXCLUSION_TRAITS = ("Hyperlipidemia", "Hypertension", "Osteoporosis", "T2D")
+
+
+def write_excluded(inputs: B.CohortInputs, labels: dict[str, pd.Series],
+                   out_dir: str) -> None:
+    """excluded_classes.tsv: who the hpp_1103 cohort leaves out, and why."""
+    paper = B.build_labels(inputs.singles, inputs.icd, inputs.selfrep,
+                           inputs.meds, inputs.chol, inputs.vat, inputs.tscore)
+    paper_tiers = disease_tiers(inputs)
+    rows = []
+    for trait in EXCLUSION_TRAITS:
+        for sex_name, sex_val in SEXES:
+            rows += excluded_rows(
+                trait, sex_name,
+                cohort_labels(paper[trait], inputs.covariates, sex_val),
+                cohort_labels(labels[trait], inputs.covariates, sex_val),
+                paper_tiers[trait])
+    path = os.path.join(out_dir, "excluded_classes.tsv")
+    pd.DataFrame(rows).to_csv(path, sep="\t", index=False, float_format="%.1f")
+    print(f"Wrote {path}")
+
+
 def main() -> None:
     B.check_label_settings()
     out_dir = os.path.join(config.OUT_ROOT, out_dir_name())
@@ -208,6 +280,9 @@ def main() -> None:
             rows += class_rows(trait, sex_name, assign_classes(cohort, tiers), names)
             totals.append({"trait": trait, "sex": sex_name, "ukb_n": len(cohort),
                            "ukb_cases": int(cohort.sum())})
+
+    if config.LABEL_DEFS == "hpp_1103":
+        write_excluded(inputs, labels, out_dir)
 
     classes = pd.DataFrame(rows)
     rates = case_rates(pd.DataFrame(totals), pd.read_csv(HPP_SIZES_TSV, sep="\t"))

@@ -56,9 +56,12 @@ TARGET_GENES_TSV = os.environ.get(
 #   be classified.
 # "hpp_1102": Ning's 2026-11-02 mapping of the HPP curated phenotypes onto UKB
 #   (UKBB_case_control.csv, ukb_traits_hpp.py).
+# "hpp_1103": Ning's 2026-11-03 correction: cases from ICD-10 (+ self-report,
+#   per UKBV_CASE_SCHEME), controls only the paper reading's controls, every
+#   other non-case dropped (ukb_traits_hpp.py).
 # UKBV_LABEL_DEFS selects. Each label set needs its own cohort and results
 # directories (UKBV_COHORT_DIR, UKBV_ASSOC_DIR).
-LABEL_DEFS_CHOICES = ("paper", "hpp_1102")
+LABEL_DEFS_CHOICES = ("paper", "hpp_1102", "hpp_1103")
 LABEL_DEFS = os.environ.get("UKBV_LABEL_DEFS", "paper")
 # Osteoporosis under hpp_1102, Ning's two options:
 #   "bmd": ICD-10 M80-M81 + self-report + min total femur BMD < 0.88 g/cm2
@@ -66,6 +69,10 @@ LABEL_DEFS = os.environ.get("UKBV_LABEL_DEFS", "paper")
 #   "diagnosis": ICD-10 M80-M81 + self-report only; everyone else a control.
 OSTEO_DEF_CHOICES = ("bmd", "diagnosis")
 OSTEO_DEF = os.environ.get("UKBV_OSTEO_DEF", "bmd")
+# Cases under hpp_1103, Ning's two schemes: "icd_selfrep" (ICD-10 +
+# self-report) or "icd_only" (ukb_traits_hpp.CASE_SCHEMES). T2D is ICD-10
+# E11 alone in both.
+CASE_SCHEME = os.environ.get("UKBV_CASE_SCHEME", "icd_selfrep")
 
 # Conda env names, resolved under UKBV_CONDA_ROOT by the shell drivers.
 PREP_ENV = "wasp_env"      # pysam + pandas: build check, gene sequences

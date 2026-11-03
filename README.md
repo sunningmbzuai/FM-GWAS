@@ -105,6 +105,15 @@ BMI > 30 against 18.5 < BMI < 24.9. `UKBV_LABEL_DEFS=hpp_1102` selects it,
 `UKBV_OSTEO_DEF=bmd|diagnosis` picks the Osteoporosis option, and
 `ning_nov02.sh` runs the disease genes with it in their own directories.
 
+A third, `hpp_1103` (Ning's 2026-11-03 correction), keeps only the paper
+reading's controls and drops every other non-case (medication only, a lab or
+blood-pressure cutoff, a T-score). Cases come from ICD-10 plus self-report
+(`UKBV_CASE_SCHEME=icd_selfrep`) or ICD-10 alone (`icd_only`); T2D is E11
+alone in both, and Obesity is as in `hpp_1102`. `ning_nov03.sh` runs
+Hypertension, Hyperlipidemia, Osteoporosis and T2D under both schemes, and
+`case_breakdown.py` also writes who each scheme leaves out
+(`excluded_classes.tsv`).
+
 `ukb_source.py` reads the 23,550-column UKB release one column at a time, so
 the full table is never loaded into memory.
 

@@ -81,3 +81,44 @@ def osteoporosis(femur_bmd: pd.Series, icd: pd.Series, selfrep: pd.Series,
         pd.Series(1, index=femur_bmd.index[case]),
         pd.Series(0, index=femur_bmd.index[control]),
     ]).sort_index().astype(int)
+
+
+# ---- hpp_1103 ---------------------------------------------------------------
+# Ning's 2026-11-03 correction: a control is a participant in the "control"
+# class of the case breakdown, i.e. a control under the paper reading
+# (ukb_traits.py: undiagnosed, no medication, measurement below the cutoff).
+# Every other non-case (medication only, lab or blood-pressure cutoff,
+# T-score, ...) is dropped. Cases come from one of two schemes:
+#   icd_selfrep  ICD-10 + self-report  (Hypertension, Hyperlipidemia, Osteoporosis)
+#   icd_only     ICD-10 alone
+# T2D is ICD-10 E11 alone in both schemes; Obesity is unchanged.
+
+CASE_SCHEMES = ("icd_selfrep", "icd_only")
+
+
+def scheme_cases(icd: pd.Series, selfrep: pd.Series, scheme: str) -> pd.Series:
+    """Case mask under one of Ning's two schemes."""
+    icd = icd.fillna(False).astype(bool)
+    if scheme == "icd_only":
+        return icd
+    if scheme == "icd_selfrep":
+        return icd | selfrep.fillna(False).astype(bool)
+    raise ValueError(f"unknown case scheme {scheme!r}; use one of {CASE_SCHEMES}")
+
+
+def case_or_paper_control(case: pd.Series, paper_label: pd.Series) -> pd.Series:
+    """1 for cases, 0 for paper-reading controls, everyone else dropped.
+
+    A case is always a paper case (the schemes only narrow the paper's case
+    sources), so a case among the paper controls means the inputs disagree.
+    """
+    case = case.fillna(False).astype(bool)
+    control = paper_label.reindex(case.index).eq(0)
+    clash = case & control
+    if clash.any():
+        raise ValueError(f"{int(clash.sum())} case(s) are also paper controls, "
+                         f"e.g. eid {clash.index[clash][0]}")
+    return pd.concat([
+        pd.Series(1, index=case.index[case]),
+        pd.Series(0, index=case.index[control]),
+    ]).sort_index().astype(int)

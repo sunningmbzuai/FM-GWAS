@@ -32,3 +32,14 @@ def test_compare_without_old_tables_leaves_paper_columns_empty():
                            "sex": ["F"], "Bonferroni": [False]})
     out = C.compare(new, [], export)
     assert out["ukbb_p_min_paper"].isna().all()
+
+
+@pytest.mark.unit
+def test_compare_with_custom_run_names():
+    new = table([["ENSG1.2", "T2D", "F", 100, 10, 1e-3, "x", False, False]])
+    old = table([["ENSG1.1", "T2D", "F", 200, 50, 0.5, "y", False, False]])
+    export = pd.DataFrame({"gene_id": ["ENSG1.2"], "trait": ["T2D"],
+                           "sex": ["F"], "Bonferroni": [False]})
+    out = C.compare(new, [old], export, new_name="s1", old_name="hpp1102")
+    assert out.iloc[0]["ukbb_p_min_s1"] == 1e-3
+    assert out.iloc[0]["ukbb_p_min_hpp1102"] == 0.5

@@ -83,3 +83,17 @@ def test_case_rates_line_up_with_hpp():
     assert row["ukb_case_pct"] == pytest.approx(40.0)
     assert row["hpp_case_pct"] == pytest.approx(10.0)
     assert row["ukb_over_hpp"] == pytest.approx(4.0)
+
+
+@pytest.mark.unit
+def test_excluded_rows_classify_dropped_paper_participants():
+    idx = pd.Index([1, 2, 3, 4, 5])
+    paper = pd.Series([1, 1, 1, 0, 0], index=idx)        # paper cohort
+    new = pd.Series([1, 0, 0], index=pd.Index([1, 4, 5]))  # 2, 3 excluded
+    tiers = [("ICD", mask(idx, {1})), ("medication", mask(idx, {2})),
+             ("BP cutoff", mask(idx, {2, 3}))]
+    rows = {r["class"]: r for r in C.excluded_rows("Hypertension", "All",
+                                                   paper, new, tiers)}
+    assert rows["medication"]["n"] == 1 and rows["BP cutoff"]["n"] == 1
+    assert rows["ICD"]["n"] == 0
+    assert rows["medication"]["pct_of_excluded"] == pytest.approx(50.0)
