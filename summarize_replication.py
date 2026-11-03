@@ -17,7 +17,9 @@ Two replication thresholds, both on the minimum p across embedding types:
                so this matches every earlier recovery number
   targeted     p < 0.05 / n_targets, Bonferroni over the targets alone. The
                min over embedding types is not corrected for, so treat this
-               one as lenient.
+               one as lenient. --n-tests TRAIT=N [default=N] fixes the
+               denominator per trait instead, to reuse an earlier run's
+               thresholds; each row carries its targeted_threshold.
 
 Power: each row carries the sample and case counts the association script
 recorded for the best embedding type, n_eff (4 / (1/cases + 1/controls) for
@@ -104,8 +106,35 @@ def per_embedding_p(targets: pd.DataFrame, assoc_dir: str) -> pd.DataFrame:
             else pd.DataFrame(columns=LONG_COLUMNS))
 
 
+PER_TRAIT = "per trait, see the targeted_threshold column"
+
+
+def parse_n_tests(items: list[str]) -> dict[str, int]:
+    """["Osteoporosis=24", "default=79"] -> {"Osteoporosis": 24, "default": 79}."""
+    out = {}
+    for item in items:
+        trait, sep, n = item.partition("=")
+        if not sep or not n.isdigit() or int(n) < 1:
+            raise ValueError(f"--n-tests expects TRAIT=N with N >= 1, got {item!r}")
+        out[trait] = int(n)
+    return out
+
+
+def targeted_thresholds(traits: pd.Series, n_targets: int,
+                        n_tests: dict[str, int] | None) -> pd.Series:
+    """0.05 / n per row: n from n_tests by trait (else its "default"), or
+    the number of targets when n_tests is not given."""
+    if not n_tests:
+        return pd.Series(TARGETED_ALPHA / n_targets, index=traits.index)
+    missing = set(traits) - set(n_tests) if "default" not in n_tests else set()
+    if missing:
+        raise ValueError(f"--n-tests has no entry or default for {sorted(missing)}")
+    return traits.map(lambda t: TARGETED_ALPHA / n_tests.get(t, n_tests.get("default")))
+
+
 def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
-                     counts: pd.DataFrame | None) -> pd.DataFrame:
+                     counts: pd.DataFrame | None,
+                     n_tests: dict[str, int] | None = None) -> pd.DataFrame:
     keys = ["gene_id", "trait", "sex"]
     base = targets[keys + ["p_F_analytic_min"]].rename(
         columns={"p_F_analytic_min": "hpp_p_min"})
@@ -125,10 +154,10 @@ def per_gene_summary(targets: pd.DataFrame, long: pd.DataFrame,
     out = base.merge(best, on=keys, how="left")
     out["status"] = out["ukbb_p_min"].notna().map(
         {True: STATUS_TESTED, False: STATUS_NOT_TESTED})
-    targeted = TARGETED_ALPHA / len(targets)
+    out["targeted_threshold"] = targeted_thresholds(out["trait"], len(targets), n_tests)
     out["replicated_genomewide"] = out["ukbb_p_min"] < SIGNIFICANCE_THRESHOLD
-    out["replicated_targeted"] = out["ukbb_p_min"] < targeted
-    out = add_power(out, targeted)
+    out["replicated_targeted"] = out["ukbb_p_min"] < out["targeted_threshold"]
+    out = add_power(out, out["targeted_threshold"])
     if counts is not None:
         # count_gene_variants.py has its own status column (sequenced or why
         # not); keep it under a name that cannot collide with ours.
@@ -184,7 +213,7 @@ def min_detectable_r2(n_eff: float, df: float, alpha: float,
     return ncp / (ncp + n_eff)
 
 
-def add_power(summary: pd.DataFrame, alpha: float) -> pd.DataFrame:
+def add_power(summary: pd.DataFrame, alpha: pd.Series) -> pd.DataFrame:
     n_samples = pd.to_numeric(summary["n_samples"], errors="coerce")
     n_cases = pd.to_numeric(summary["n_cases"], errors="coerce")
     n_eff = effective_n(n_samples, n_cases)
@@ -194,8 +223,8 @@ def add_power(summary: pd.DataFrame, alpha: float) -> pd.DataFrame:
         n_cases=n_cases,
         n_controls=n_samples - n_cases,
         n_eff=n_eff,
-        min_detectable_r2=[min_detectable_r2(n, k, alpha)
-                           for n, k in zip(n_eff, df)],
+        min_detectable_r2=[min_detectable_r2(n, k, a)
+                           for n, k, a in zip(n_eff, df, alpha)],
     )
 
 
@@ -207,7 +236,9 @@ def replication_rates(summary: pd.DataFrame) -> dict:
         rates[f"n_replicated_{flag}"] = n
         rates[f"rate_{flag}_of_targets"] = n / len(summary) if len(summary) else float("nan")
         rates[f"rate_{flag}_of_tested"] = n / tested.sum() if tested.any() else float("nan")
-    rates["targeted_threshold"] = TARGETED_ALPHA / len(summary) if len(summary) else float("nan")
+    thresholds = summary["targeted_threshold"].unique() if len(summary) else []
+    rates["targeted_threshold"] = (thresholds[0] if len(thresholds) == 1
+                                   else PER_TRAIT if len(thresholds) else float("nan"))
     rates["genomewide_threshold"] = SIGNIFICANCE_THRESHOLD
     return rates
 
@@ -219,14 +250,21 @@ def main() -> None:
     ap.add_argument("--assoc_dir", default=config.ASSOC_DIR)
     ap.add_argument("--variants", help="count_gene_variants.py output tsv")
     ap.add_argument("--out", default=os.path.join(config.ASSOC_DIR, "ukbb_replication"))
+    ap.add_argument("--n-tests", nargs="+", metavar="TRAIT=N",
+                    help="targeted threshold 0.05/N per trait ('default=N' for "
+                         "the rest) in place of 0.05/n_targets")
     args = ap.parse_args()
+    try:
+        n_tests = parse_n_tests(args.n_tests or [])
+    except ValueError as err:
+        ap.error(str(err))
 
     targets = pd.read_csv(args.targets, sep="\t")
     ok, message = check_target_source(targets)
     print(f"[{'ok' if ok else 'warn'}] {message}")
     counts = pd.read_csv(args.variants, sep="\t") if args.variants else None
     long = per_embedding_p(targets, args.assoc_dir)
-    summary = per_gene_summary(targets, long, counts)
+    summary = per_gene_summary(targets, long, counts, n_tests)
     rates = replication_rates(summary)
 
     long.to_csv(f"{args.out}.per_embedding.tsv", sep="\t", index=False)

@@ -2,6 +2,7 @@ import os
 import sys
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -168,3 +169,35 @@ def test_target_source_stale_list(tmp_path):
     assert not ok
     assert "1 in the export but not the target list" in message
     assert "2 in the target list but not the export" in message
+
+
+def test_parse_n_tests():
+    assert S.parse_n_tests(["Osteoporosis=24", "default=79"]) == \
+        {"Osteoporosis": 24, "default": 79}
+    with pytest.raises(ValueError, match="TRAIT=N"):
+        S.parse_n_tests(["Osteoporosis"])
+
+
+def test_n_tests_sets_the_targeted_threshold_per_trait(tmp_path):
+    # p = 0.01 on both: replicated at 0.05/2 = 0.025 (Height), not at
+    # 0.05/100 (VAT, from the default), ignoring the 3 targets in the list
+    write_assoc(tmp_path, "Height", "F", "ENSG01.3", {"concat_cage": 0.01})
+    write_assoc(tmp_path, "VAT", "M", "ENSG03.2", {"concat_cage": 0.01})
+    summary = S.per_gene_summary(targets(),
+                                 S.per_embedding_p(targets(), str(tmp_path)),
+                                 None, n_tests={"Height": 2, "default": 100})
+    by_gene = summary.set_index("gene_id")
+    assert bool(by_gene.loc["ENSG01.3", "replicated_targeted"])
+    assert not bool(by_gene.loc["ENSG03.2", "replicated_targeted"])
+    assert by_gene.loc["ENSG03.2", "targeted_threshold"] == pytest.approx(5e-4)
+    rates = S.replication_rates(summary)
+    assert rates["n_replicated_targeted"] == 1
+    assert rates["targeted_threshold"] == S.PER_TRAIT
+
+
+def test_without_n_tests_threshold_is_over_the_targets(tmp_path):
+    write_assoc(tmp_path, "Height", "F", "ENSG01.3", {"concat_cage": 0.01})
+    summary = S.per_gene_summary(targets(),
+                                 S.per_embedding_p(targets(), str(tmp_path)), None)
+    assert summary["targeted_threshold"].tolist() == pytest.approx([0.05 / 3] * 3)
+    assert S.replication_rates(summary)["targeted_threshold"] == pytest.approx(0.05 / 3)

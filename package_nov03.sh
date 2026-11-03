@@ -62,9 +62,9 @@ Case and control definitions
 
 Thresholds
   Genome-wide: p < 2.5e-6.
-  Targeted: 0.05 / number of targets in the table. ukbb_replication.tsv uses
-  0.05/67 = 7.5e-4 (all rows). The Bonferroni and FDR-only tables are scored
-  separately, at 0.05/3 and 0.05/64.
+  Targeted: the same thresholds as the 2 November run, 0.05/24 = 2.1e-3 for
+  osteoporosis and 0.05/79 = 6.3e-4 for the other traits, in every table.
+  Each row gives its threshold in the targeted_threshold column.
   ukbb_p_min is the lowest p-value over the 60 embedding types.
 
 1_scheme1_icd_selfreport/ and 2_scheme2_icd_only/ (same files in each)

@@ -20,6 +20,7 @@
 #   bash ning_nov03.sh cohorts   # hpp_1103 cohorts, both schemes
 #   bash ning_nov03.sh cases     # case classes, excluded classes, case rates
 #   bash ning_nov03.sh assoc     # association, then the replication tables
+#   bash ning_nov03.sh score     # replication tables only (assoc already done)
 #   bash ning_nov03.sh           # all of the above, in order
 #
 # Run on a CPU host with the cluster paths (paths.env). Everything is written
@@ -40,6 +41,9 @@ EXPECTED_TARGETS=67
 NOV02_TARGETS="${HERE}/targets_hpp1102.tsv"
 TARGETS_TSV="${HERE}/targets_hpp1103.tsv"
 TARGET_GENE_DIR="${OUT_ROOT}/target_gene_lists_hpp1103"
+# Targeted threshold 0.05/N, with N as in the 2 Nov run (not the 67 here):
+# 24 for Osteoporosis (the diagnosis-only run), 79 for the other traits.
+N_TESTS=(Osteoporosis=24 default=79)
 ASSOC_THREADS=8
 ASSOC_SPARE_CORES=2
 # Earlier replication tables, for the comparisons. Paper labels: the FDR-only
@@ -122,7 +126,7 @@ mask = [k in keys for k in zip(bare(targets.gene_id), targets.trait, targets.sex
 targets[mask].to_csv(out, sep="\t", index=False)
 PY
     "${PHENO_PY}" summarize_replication.py --targets "$subset" \
-        --out "${UKBV_ASSOC_DIR}/ukbb_replication_$2" \
+        --n-tests "${N_TESTS[@]}" --out "${UKBV_ASSOC_DIR}/ukbb_replication_$2" \
         || die "replication summary for $2 failed"
 }
 
@@ -150,10 +154,26 @@ assoc_scheme() {
         3) die "assoc deferred: feature tables not readable here" ;;
         *) die "some cells failed ($1) -- rerun 'bash ning_nov03.sh assoc'" ;;
     esac
+    score_scheme "$1"
+}
+
+# Replication tables and comparisons of one finished scheme: $1 = scheme.
+score_scheme() {
+    use_scheme "$1"
+    "${PHENO_PY}" summarize_replication.py --targets "$UKBV_TARGET_GENES_TSV" \
+        --n-tests "${N_TESTS[@]}" --out "${UKBV_ASSOC_DIR}/ukbb_replication" \
+        || die "replication summary failed ($1)"
     summarize_group True bonferroni
     summarize_group False fdr_only
     compare_with "$1" paper paper_vs_hpp1103.tsv "${PAPER_TABLES[@]}"
     compare_with "$1" hpp1102 hpp1102_vs_hpp1103.tsv "${HPP1102_TABLES[@]}"
+}
+
+stage_score() {
+    local s
+    for s in "${SCHEMES[@]}"; do
+        score_scheme "$s"
+    done
 }
 
 stage_assoc() {
@@ -174,7 +194,8 @@ case "$STAGE" in
     cohorts)  stage_cohorts ;;
     cases)    stage_cases ;;
     assoc)    stage_assoc ;;
+    score)    stage_score ;;
     all)      stage_targets; stage_cohorts; stage_cases; stage_assoc ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) die "unknown stage '$STAGE' (targets | cohorts | cases | assoc | all)" ;;
+    -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) die "unknown stage '$STAGE' (targets | cohorts | cases | assoc | score | all)" ;;
 esac
