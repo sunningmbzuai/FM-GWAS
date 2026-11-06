@@ -16,7 +16,8 @@
 #   bash ning_nov03b.sh traits    # deep scan -> trait catalog + values
 #   bash ning_nov03b.sh pca       # per-gene PCA scores, saved once
 #   bash ning_nov03b.sh scan      # all tests
-#   bash ning_nov03b.sh summary   # one row per gene x trait x sex, hits
+#   bash ning_nov03b.sh summary   # tables, top hits, and the zip for Ning
+#                                 #   (UKBV_OUT_ROOT/ukbb_gene_scan_1103.zip)
 #   bash ning_nov03b.sh eta       # progress and time left of a running scan
 #   bash ning_nov03b.sh           # genes, traits, pca, scan, summary
 #
@@ -193,10 +194,18 @@ summarize() {
     "${PHENO_PY}" summarize_gene_scan.py --out "$out" ${reuse[@]+"${reuse[@]}"} \
         --catalog "${SCAN_DIR}/trait_catalog.tsv" --scan "$SCAN_DIR" || die "summary failed"
     "${PHENO_PY}" top_hits.py "$out" || die "top_hits failed"
+    "${PHENO_PY}" package_gene_scan.py --results "$out" --zip "${OUT_ROOT}/$2.zip" \
+        --gtf "$GRCH37_GTF" --title "$3" --genetic-pcs "${4:-0}" || die "packaging failed"
 }
 
-stage_summary() { summarize "$RESULTS"; }
-stage_summary_gpc() { summarize "$RESULTS_GPC"; }
+stage_summary() {
+    summarize "$RESULTS" ukbb_gene_scan_1103 \
+        "UKB scan: 170 genes (novel_genes_id_1103) x every UKB trait, All / F / M"
+}
+stage_summary_gpc() {
+    summarize "$RESULTS_GPC" "ukbb_gene_scan_1103_gpc${GENETIC_PCS}" \
+        "UKB scan, sensitivity: + genetic PCs 1-${GENETIC_PCS} as covariates" "$GENETIC_PCS"
+}
 
 # Progress of whichever stage is running in another shell, from the files on
 # disk and the start marker run_ranks leaves (newest of scan/pca, else traits).
