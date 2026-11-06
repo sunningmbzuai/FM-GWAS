@@ -69,8 +69,7 @@ def readme(title: str, rows: int, n_genes: int, hits: pd.DataFrame, strict: pd.D
                   f"  ancestry_linked = True, {len(anc):,} of the p < 2.5e-6 rows, "
                   f"{anc.gene_id.nunique()} genes).\n"
                   f"  Hits on other ancestry-structured traits may also be partly ancestry.\n"
-                  f"  These results have no genetic-PC adjustment, as in FM-GWAS; a run with\n"
-                  f"  genetic PCs 1-10 as extra covariates can be made on request.")
+                  f"  These results have no genetic-PC adjustment, as in FM-GWAS.")
     return f"""{title}
 {"=" * len(title)}
 Packaged {date.today():%d %B %Y}.
