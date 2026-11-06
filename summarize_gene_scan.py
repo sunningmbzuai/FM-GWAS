@@ -76,7 +76,7 @@ def summarize(out: Path, catalog: Path | None, workers: int = 1) -> pd.DataFrame
     table["genome_wide"] = table.p_min < GENOME_WIDE
     table["bonferroni"] = table.p_min < 0.05 / max(n_cells, 1)
     if catalog is not None and catalog.is_file():
-        meta = pd.read_csv(catalog, sep="\t")[["trait_id", "title", "path", "field"]]
+        meta = pd.read_csv(catalog, sep="\t", dtype={"trait_id": str})[["trait_id", "title", "path", "field"]]
         table = table.merge(meta, on="trait_id", how="left")
     table = table.sort_values("p_min")
     table.to_csv(out / "gene_trait_scan.tsv", sep="\t", index=False)
