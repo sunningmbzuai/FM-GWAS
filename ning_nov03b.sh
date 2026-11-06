@@ -191,7 +191,7 @@ summarize() {
         reuse=(--from-summary)
     fi
     "${PHENO_PY}" summarize_gene_scan.py --out "$out" ${reuse[@]+"${reuse[@]}"} \
-        --catalog "${SCAN_DIR}/trait_catalog.tsv" || die "summary failed"
+        --catalog "${SCAN_DIR}/trait_catalog.tsv" --scan "$SCAN_DIR" || die "summary failed"
     "${PHENO_PY}" top_hits.py "$out" || die "top_hits failed"
 }
 

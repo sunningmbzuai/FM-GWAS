@@ -54,7 +54,12 @@ def main(argv: list[str]) -> int:
           f"{hits.gene_id.nunique()} genes, {hits.field.nunique()} fields")
     print(f"  p < {strict_p:.2e} (x {N_EMBEDDINGS} embeddings): {len(strict):,} rows, "
           f"{strict.gene_id.nunique()} genes, {strict.field.nunique()} fields; "
-          f"{int((strict.p_min == 0).sum())} below float range (p shown as 0)\n")
+          f"{int((strict.p_min == 0).sum())} below float range (p shown as 0)")
+    if "ancestry_linked" in hits:
+        anc = hits[hits.ancestry_linked.astype(bool)]
+        print(f"  ancestry-linked fields (birthplace, ethnicity, country of birth): "
+              f"{len(anc):,} of the FM-GWAS hits, {anc.gene_id.nunique()} genes")
+    print()
     show("fields per gene (FM-GWAS threshold)", hits.groupby("gene_id").field.nunique())
     show("genes per field (FM-GWAS threshold)", hits.groupby("trait").gene_id.nunique())
     top = hits.sort_values(["p_min", "best_stat"], ascending=[True, False])

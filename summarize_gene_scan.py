@@ -10,8 +10,13 @@ cells are dropped. Many tables repeat the same UKB field (derived train/test
 splits of the main dataset), so a second table keeps one row per gene x field x
 sex: the table with the smallest p, plus how many tables carried the field.
 
+With --scan (the trait_scan.py directory), traits that are not phenotypes are
+dropped as well -- covariate proxies, missingness indicators, bookkeeping
+columns (trait_qc.py) -- and listed with the reason in
+gene_trait_scan.excluded_traits.tsv; ancestry-linked fields are flagged.
+
     python summarize_gene_scan.py --out DIR [--catalog trait_catalog.tsv] [--workers N]
-                                  [--from-summary]
+                                  [--scan TRAIT_SCAN_DIR] [--from-summary]
 writes, under DIR:
     gene_trait_scan.tsv              gene x trait x sex
     gene_trait_scan.hits.tsv         ... at p < 2.5e-6
@@ -34,6 +39,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import trait_qc
 import trait_rules as R
 
 GENOME_WIDE = 2.5e-6
@@ -130,14 +136,31 @@ def report(name: str, table: pd.DataFrame) -> None:
           f"{int(table.bonferroni.sum()):,} at Bonferroni 0.05/{len(table):,}")
 
 
+def drop_non_phenotypes(cells: pd.DataFrame, scan: Path, out: Path) -> pd.DataFrame:
+    """trait_qc exclusions out, ancestry flag in; excluded traits listed in a file."""
+    catalog = pd.read_csv(scan / "trait_catalog.tsv", sep="\t",
+                          dtype={"trait_id": str, "field": str})
+    qc = trait_qc.classify(catalog, trait_qc.load_covariate_r(scan))
+    excluded = qc[(qc.excluded != "") & qc.trait_id.isin(cells.trait_id)]
+    excluded.to_csv(out / "gene_trait_scan.excluded_traits.tsv", sep="\t", index=False)
+    dropped = cells.trait_id.isin(excluded.trait_id)
+    print(f"[summary] dropped {int(dropped.sum()):,} cells of {len(excluded):,} non-phenotype "
+          f"traits (see gene_trait_scan.excluded_traits.tsv)", file=sys.stderr, flush=True)
+    flags = qc.set_index("trait_id").ancestry_linked
+    kept = cells[~dropped]
+    return kept.assign(ancestry_linked=kept.trait_id.map(flags).fillna(False).astype(bool))
+
+
 def summarize(out: Path, catalog: Path | None, workers: int = 1,
-              from_summary: bool = False) -> pd.DataFrame:
+              from_summary: bool = False, scan: Path | None = None) -> pd.DataFrame:
     cells = read_cells(out, workers, from_summary)
     pcs = cells.trait_id.map(R.is_genetic_pc)
     if pcs.any():
         print(f"[summary] dropped {int(pcs.sum()):,} genetic-PC cells (ancestry, not traits)",
               file=sys.stderr, flush=True)
     cells = cells[~pcs]
+    if scan is not None:
+        cells = drop_non_phenotypes(cells, scan, out)
     if catalog is not None and catalog.is_file():
         meta = pd.read_csv(catalog, sep="\t", dtype={"trait_id": str, "field": str})
         cells = cells.merge(meta[["trait_id", "title", "path", "field"]],
@@ -158,11 +181,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--catalog")
     ap.add_argument("--workers", type=int, default=default_workers())
+    ap.add_argument("--scan", help="trait_scan.py directory: drop non-phenotype traits")
     ap.add_argument("--from-summary", action="store_true",
                     help="rebuild from an existing gene_trait_scan.tsv, skip the parts")
     args = ap.parse_args(argv)
     summarize(Path(args.out), Path(args.catalog) if args.catalog else None,
-              max(1, args.workers), args.from_summary)
+              max(1, args.workers), args.from_summary,
+              Path(args.scan) if args.scan else None)
     return 0
 
 
