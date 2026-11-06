@@ -37,6 +37,7 @@ BOOKKEEPING = re.compile(r"^(code|index|idx|id|fold|split|set|batch|group|row|"
                          r"unnamed(: ?\d+)?)$", re.I)
 MISSINGNESS = re.compile(r"_nan$", re.I)
 ANCESTRY_FIELDS = frozenset({"129", "130", "1647", "20115", "21000"})
+ANCESTRY_NAME = re.compile(r"ethnic|ancestr|race|birth_?place|country_?of_?birth", re.I)
 
 
 def base_field(field: str) -> str:
@@ -104,6 +105,11 @@ def load_covariate_r(scan: Path) -> pd.DataFrame:
     return table
 
 
+def is_ancestry_linked(field: str) -> bool:
+    """Birthplace / ethnicity / country of birth, by UKB field number or by name."""
+    return base_field(field) in ANCESTRY_FIELDS or bool(ANCESTRY_NAME.search(str(field)))
+
+
 def exclusion_reason(field: str, r_sex: float, r_age: float) -> str | None:
     name = str(field).split(":")[-1]
     if BOOKKEEPING.match(name):
@@ -123,7 +129,7 @@ def classify(catalog: pd.DataFrame, covariate: pd.DataFrame) -> pd.DataFrame:
     reasons = [exclusion_reason(f, rs, ra)
                for f, rs, ra in zip(table.field, table.r_sex, table.r_age)]
     return table.assign(excluded=[r or "" for r in reasons],
-                        ancestry_linked=table.field.map(base_field).isin(ANCESTRY_FIELDS))
+                        ancestry_linked=table.field.map(is_ancestry_linked))
 
 
 def main(argv: list[str] | None = None) -> int:

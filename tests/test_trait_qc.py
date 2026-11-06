@@ -80,3 +80,11 @@ def test_summary_drops_non_phenotypes(tmp_path):
         == {"ukbA:129": True, "ukbA:2724": False, "ukbA:30840": False}
     excluded = pd.read_csv(out / "gene_trait_scan.excluded_traits.tsv", sep="\t")
     assert len(excluded) == 4
+
+
+@pytest.mark.unit
+def test_ancestry_flag_by_number_or_name():
+    for field in ("129", "21000-0.0_1002.0", "ethnic_code", "Country_of_birth", "Ethnicity"):
+        assert Q.is_ancestry_linked(field), field
+    for field in ("30840", "Height", "1717-0.0_3.0", "2149"):
+        assert not Q.is_ancestry_linked(field), field
