@@ -52,21 +52,25 @@ def world(tmp_path_factory):
     effect = (pairs == 2).sum(axis=1)
     quant = 0.4 * effect + 0.02 * age + rng.normal(size=N)
     binary = (rng.random(N) < 1 / (1 + np.exp(-(effect - 0.5)))).astype(float)
+    gpcs = rng.normal(size=(N, 2)) + effect[:, None] * 0.3   # ancestry tracks the gene
+    quant = quant + 0.5 * gpcs[:, 0]
     people = pd.DataFrame({"participant_id": ids, "sex": sex, "age": age})
 
     scan = tmp / "traits"
     scan.mkdir()
     people.to_csv(scan / "participants.tsv", sep="\t", index=False)
-    np.save(scan / "trait_values.npy", np.column_stack([quant, binary]))
-    pd.DataFrame({"trait_id": ["q", "b"], "column": [0, 1],
-                  "kind": ["quantitative", "binary"]}).to_csv(
+    np.save(scan / "trait_values.npy", np.column_stack([quant, binary, gpcs]))
+    pd.DataFrame({"trait_id": ["q", "b", "x_genetic_pcs:pc1", "x_genetic_pcs:pc2"],
+                  "column": [0, 1, 2, 3],
+                  "kind": ["quantitative", "binary", "quantitative", "quantitative"]}).to_csv(
         scan / "trait_catalog.tsv", sep="\t", index=False)
     genes = tmp / "genes.tsv"
     genes.write_text(f"gene_id\n{GENE}\n")
     for name, label in (("q", quant), ("b", binary)):
-        people.assign(label=label).to_csv(tmp / f"{name}_All.tsv", sep="\t", index=False)
+        people.assign(label=label, pc1=gpcs[:, 0], pc2=gpcs[:, 1]).to_csv(
+            tmp / f"{name}_All.tsv", sep="\t", index=False)
 
-    cache, out = tmp / "cache", tmp / "out"
+    cache, out, out_gpc = tmp / "cache", tmp / "out", tmp / "out_gpc"
     C.main(["--genes", str(genes), "--participants", str(scan / "participants.tsv"),
             "--feature-root", str(feature_root), "--cache", str(cache)])
     floor = G.MIN_CELL_N
@@ -74,10 +78,12 @@ def world(tmp_path_factory):
     try:
         G.main(["--scan", str(scan), "--cache", str(cache), "--genes", str(genes),
                 "--out", str(out)])
+        G.main(["--scan", str(scan), "--cache", str(cache), "--genes", str(genes),
+                "--out", str(out_gpc), "--genetic-pcs", "2"])
     finally:
         G.MIN_CELL_N = floor
     return dict(tmp=tmp, feature_root=feature_root, genes=genes, cache=cache, out=out,
-                data=data)
+                out_gpc=out_gpc, data=data)
 
 
 @pytest.mark.integration
@@ -100,12 +106,13 @@ def test_cache_rebuilds_the_scripts_pca_scores_exactly(world):
             assert meta["sexes"][name]["components"][embed] == info["n_components"]
 
 
-def script_p(world, trait: str, test: str, sex: str = "All") -> pd.Series:
-    out = world["tmp"] / f"script_{trait}_{sex}"
+def script_p(world, trait: str, test: str, sex: str = "All",
+             covariates: str = "age,sex") -> pd.Series:
+    out = world["tmp"] / f"script_{trait}_{sex}_{covariates.replace(',', '_')}"
     cmd = [sys.executable, str(SCRIPT), "run", trait, sex, "--gene_tsv", str(world["genes"]),
            "--feature_root", str(world["tmp"] / "script_features"),
            "--cohort_file", str(world["tmp"] / f"{trait}_All.tsv"),
-           "--covariates", "age,sex", "--gene_pca", assoc_settings.GENE_PCA,
+           "--covariates", covariates, "--gene_pca", assoc_settings.GENE_PCA,
            "--tests", test, "--embed_type", ",".join(assoc_settings.ALL_VIEWS),
            "--out_dir", str(out), "--no_progress"]
     root = world["tmp"] / "script_features" / GENE
@@ -117,9 +124,13 @@ def script_p(world, trait: str, test: str, sex: str = "All") -> pd.Series:
     return frame.set_index("embed_type")["p_F" if test == "F" else "p_LRT"]
 
 
-def scan_p(world, trait: str, sex: str = "All") -> pd.Series:
-    frame = pd.concat(pd.read_csv(p, sep="\t")
-                      for p in (world["out"] / "per_gene" / GENE).glob("part*.tsv.gz"))
+def scan_rows(world, out: str = "out") -> pd.DataFrame:
+    return pd.concat(pd.read_csv(p, sep="\t")
+                     for p in (world[out] / "per_gene" / GENE).glob("part*.tsv.gz"))
+
+
+def scan_p(world, trait: str, sex: str = "All", out: str = "out") -> pd.Series:
+    frame = scan_rows(world, out)
     cell = frame[(frame.trait_id == trait) & (frame.sex == sex)]
     return cell.set_index("embed_type")["p"]
 
@@ -140,3 +151,22 @@ def test_rerun_resumes_without_recomputing(world):
     assert G.scan_gene(C.fmgwas(), G.Scan(world["tmp"] / "traits"), world["cache"],
                        GENE, world["out"], 50) == 0
     assert part.stat().st_mtime_ns == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("sex", ["All", "F"])
+@pytest.mark.parametrize("trait,test", [("q", "F"), ("b", "LRT")])
+def test_genetic_pcs_match_the_script_with_pc_covariates(world, trait, test, sex):
+    expected = script_p(world, trait, test, sex, covariates="age,sex,pc1,pc2")
+    got = scan_p(world, trait, sex, out="out_gpc")
+    assert len(got) == 60 and got.notna().all()
+    np.testing.assert_allclose(got.loc[expected.index], expected, rtol=1e-8)
+    # and the PCs change the answer: q depends on pc1, which tracks the gene
+    if trait == "q":
+        assert not np.allclose(got, scan_p(world, trait, sex))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("out", ["out", "out_gpc"])
+def test_genetic_pcs_are_never_tested_as_traits(world, out):
+    assert set(scan_rows(world, out).trait_id) == {"q", "b"}

@@ -1,7 +1,10 @@
-"""Quick read of a gene_scan summary: hits that survive Bonferroni over every
-gene x trait x sex cell AND the 60 embeddings the minimum p was taken over.
+"""Quick read of a gene_scan summary (summarize_gene_scan.py output), one row per
+gene x UKB field x sex, genetic PCs already dropped.
 
-    python top_hits.py <results dir>   # dir holding gene_trait_scan.tsv
+Two thresholds: Ning's genome-wide 2.5e-6 (the FM-GWAS paper's), and a strict
+Bonferroni over every row AND the 60 embeddings the minimum p was taken over.
+
+    python top_hits.py <results dir>   # dir holding gene_trait_scan.by_field.tsv
 """
 from __future__ import annotations
 
@@ -12,8 +15,27 @@ import pandas as pd
 
 N_EMBEDDINGS = 60
 ALPHA = 0.05
-COLS = ["gene_id", "sex", "trait", "p_min", "best_stat", "best_embedding", "n_samples",
-        "n_cases"]
+GENOME_WIDE = 2.5e-6
+STEM = "gene_trait_scan.by_field"
+COLS = ["gene_id", "sex", "trait", "n_tables", "p_min", "best_stat", "best_embedding",
+        "n_samples", "n_cases"]
+TOP_N = 30
+
+
+def count_rows(path: Path) -> int:
+    with open(path) as handle:
+        return sum(1 for _ in handle) - 1
+
+
+def label(hits: pd.DataFrame) -> pd.Series:
+    """Field title when the scan found a UKB dictionary, else the UKB field id."""
+    title = hits["title"] if "title" in hits else pd.Series(index=hits.index, dtype=str)
+    return title.where(title.notna() & (title != ""), hits.field.fillna(hits.trait_id))
+
+
+def show(name: str, series: pd.Series) -> None:
+    print(f"{name}:")
+    print(series.sort_values(ascending=False).head(TOP_N).to_string(), "\n")
 
 
 def main(argv: list[str]) -> int:
@@ -21,33 +43,23 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     results = Path(argv[0])
-    n_cells = sum(1 for _ in open(results / "gene_trait_scan.tsv")) - 1
-    hits = pd.read_csv(results / "gene_trait_scan.hits.tsv", sep="\t",
-                       dtype={"trait_id": str})
-    # Titles are empty when trait_scan found no UKB Showcase dictionary:
-    # fall back to the trait id (table:field).
-    title = hits["title"] if "title" in hits else pd.Series(index=hits.index, dtype=str)
-    hits = hits.assign(trait=title.where(title.notna() & (title != ""), hits.trait_id))
-    threshold = ALPHA / (n_cells * N_EMBEDDINGS)
-    strict = hits[hits.p_min < threshold]
-    print(f"{n_cells:,} cells; {len(hits):,} at p < 2.5e-6; threshold "
-          f"{ALPHA}/({n_cells:,} x {N_EMBEDDINGS}) = {threshold:.2e}")
-    print(f"{len(strict):,} cells pass it, {strict.gene_id.nunique()} genes, "
-          f"{strict.trait_id.nunique()} traits; "
-          f"{int((strict.p_min == 0).sum())} with p below float range (shown as 0)\n")
-    print("cells per gene:")
-    print(strict.groupby("gene_id").size().sort_values(ascending=False)
-          .head(20).to_string(), "\n")
-    print("traits per gene (top 20 genes):")
-    print(strict.groupby("gene_id").trait_id.nunique().sort_values(ascending=False)
-          .head(20).to_string(), "\n")
-    print("cells per trait:")
-    print(strict.groupby("trait").size().sort_values(ascending=False)
-          .head(30).to_string(), "\n")
-    # p underflows to 0 for the strongest cells: break ties on the statistic.
-    top = strict.sort_values(["p_min", "best_stat"], ascending=[True, False])
-    print("top 30 cells (p = 0 means below 1e-308; ranked by statistic):")
-    print(top[COLS].head(30).to_string(index=False))
+    n_rows = count_rows(results / f"{STEM}.tsv")
+    hits = pd.read_csv(results / f"{STEM}.hits.tsv", sep="\t",
+                       dtype={"trait_id": str, "field": str})
+    hits = hits.assign(trait=label(hits))
+    strict_p = ALPHA / (n_rows * N_EMBEDDINGS)
+    strict = hits[hits.p_min < strict_p]
+    print(f"{n_rows:,} gene x field x sex rows")
+    print(f"  p < {GENOME_WIDE:g} (FM-GWAS):        {len(hits):,} rows, "
+          f"{hits.gene_id.nunique()} genes, {hits.field.nunique()} fields")
+    print(f"  p < {strict_p:.2e} (x {N_EMBEDDINGS} embeddings): {len(strict):,} rows, "
+          f"{strict.gene_id.nunique()} genes, {strict.field.nunique()} fields; "
+          f"{int((strict.p_min == 0).sum())} below float range (p shown as 0)\n")
+    show("fields per gene (FM-GWAS threshold)", hits.groupby("gene_id").field.nunique())
+    show("genes per field (FM-GWAS threshold)", hits.groupby("trait").gene_id.nunique())
+    top = hits.sort_values(["p_min", "best_stat"], ascending=[True, False])
+    print(f"top {TOP_N} (p = 0 means below 1e-308; ranked by statistic):")
+    print(top[COLS].head(TOP_N).to_string(index=False))
     return 0
 
 

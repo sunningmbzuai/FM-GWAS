@@ -9,12 +9,17 @@ the gene's PCA scores. The only change from run_assoc.sh is the one Ning asked
 for: the PCA is fitted once per gene and sex sample (All, F, M) and reused
 for every trait of that sex, not refitted inside each trait cell.
 
+Genetic PCs are never tested as traits (trait_rules.is_genetic_pc). The default
+covariates are Ning's (FM-GWAS paper and script: age and sex, no genetic PCs).
+--genetic-pcs N adds the scan's genetic PCs 1..N to the reduced model, a
+sensitivity analysis for ancestry confounding; write it to its own --out.
+
 Work is checkpointed per gene and block of traits:
     <out>/per_gene/<gene>/part<k>.tsv.gz
 so a rerun only does the blocks that are missing.
 
     python gene_scan.py --scan DIR --cache DIR --genes genes.tsv --out DIR \
-        [--rank 0 --world-size 8] [--traits-per-part 50]
+        [--rank 0 --world-size 8] [--traits-per-part 50] [--genetic-pcs 10]
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
+import trait_rules as R
 from gene_pca_cache import SEXES, fmgwas, load_cache
 
 MIN_CELL_N = 500
@@ -52,20 +58,39 @@ class Scan:
             raise ValueError(f"trait_values.npy is {self.values.shape}, expected "
                              f"({len(self.people)}, {len(self.catalog)})")
 
+    def genetic_pcs(self, n: int) -> np.ndarray | None:
+        """participants x n matrix of genetic PCs 1..n from the scan, None if n == 0."""
+        if n <= 0:
+            return None
+        numbers = self.catalog.trait_id.map(R.genetic_pc_number)
+        column = {int(k): int(c) for k, c in zip(numbers, self.catalog.column) if pd.notna(k)}
+        missing = [k for k in range(1, n + 1) if k not in column]
+        if missing:
+            raise ValueError(f"genetic PC(s) {missing} not in the trait catalog "
+                             f"({len(column)} found)")
+        return np.column_stack([np.asarray(self.values[:, column[k]], np.float64)
+                                for k in range(1, n + 1)])
+
 
 def cell_design(fm, scan: Scan, column: int, sex_code: int | None,
-                gene_pos: np.ndarray) -> dict | None:
-    """Cohort, outcome and reduced design of one trait x sex cell (as prepare_gene)."""
+                gene_pos: np.ndarray, pcs: np.ndarray | None = None) -> dict | None:
+    """Cohort, outcome and reduced design of one trait x sex cell (as prepare_gene).
+    pcs: optional participants x k genetic PCs, added to the covariates."""
     y_all = np.asarray(scan.values[:, column], dtype=np.float64)
     sex = scan.people.sex.to_numpy()
     keep = np.isfinite(y_all) & (gene_pos >= 0)
+    if pcs is not None:
+        keep &= np.isfinite(pcs).all(axis=1)
     if sex_code is not None:
         keep &= sex == sex_code
     if keep.sum() < MIN_CELL_N:
         return None
     y = y_all[keep]
     cov_names = ["age", "sex"] if sex_code is None else ["age"]
-    cov = fm.standardize(scan.people.loc[keep, cov_names].to_numpy(np.float64))[0]
+    cov = scan.people.loc[keep, cov_names].to_numpy(np.float64)
+    if pcs is not None:
+        cov = np.column_stack([cov, pcs[keep]])
+    cov = fm.standardize(cov)[0]
     is_binary = bool(np.array_equal(np.unique(y), [0.0, 1.0]))
     if is_binary and min(y.sum(), len(y) - y.sum()) < MIN_CELL_MINOR:
         return None
@@ -103,15 +128,18 @@ def positions(scan: Scan, ids: np.ndarray) -> np.ndarray:
     return np.array([pos.get(int(p), -1) for p in scan.people.participant_id], np.int64)
 
 
-def run_part(fm, scan: Scan, gene: str, traits: pd.DataFrame, samples: dict) -> pd.DataFrame:
+def run_part(fm, scan: Scan, gene: str, traits: pd.DataFrame, samples: dict,
+             pcs: np.ndarray | None = None) -> pd.DataFrame:
     """samples: {sex: (gene_pos, scores, components)} -- each sex its own PCA."""
     rows: list[dict] = []
     for _, trait in traits.iterrows():
+        if R.is_genetic_pc(trait.trait_id):
+            continue
         for sex, code in SEXES:
             if sex not in samples:
                 continue
             gene_pos, scores, components = samples[sex]
-            cell = cell_design(fm, scan, int(trait.column), code, gene_pos)
+            cell = cell_design(fm, scan, int(trait.column), code, gene_pos, pcs)
             if cell is None:
                 continue
             rows.extend(test_cell(fm, gene, trait, sex, cell, scores, components))
@@ -124,7 +152,8 @@ def atomic_tsv_gz(path: Path, frame: pd.DataFrame) -> None:
     os.replace(tmp, path)
 
 
-def scan_gene(fm, scan: Scan, cache: Path, gene: str, out: Path, part_size: int) -> int:
+def scan_gene(fm, scan: Scan, cache: Path, gene: str, out: Path, part_size: int,
+              pcs: np.ndarray | None = None) -> int:
     """Run the missing parts of one gene; returns how many parts ran."""
     gene_dir = out / "per_gene" / gene
     parts = [scan.catalog.iloc[i:i + part_size] for i in range(0, len(scan.catalog), part_size)]
@@ -139,7 +168,7 @@ def scan_gene(fm, scan: Scan, cache: Path, gene: str, out: Path, part_size: int)
                for sex, (ids, scores) in by_sex.items()}
     gene_dir.mkdir(parents=True, exist_ok=True)
     for k in todo:
-        atomic_tsv_gz(gene_dir / f"part{k}.tsv.gz", run_part(fm, scan, gene, parts[k], samples))
+        atomic_tsv_gz(gene_dir / f"part{k}.tsv.gz", run_part(fm, scan, gene, parts[k], samples, pcs))
     return len(todo)
 
 
@@ -152,17 +181,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rank", type=int, default=0)
     ap.add_argument("--world-size", type=int, default=1)
     ap.add_argument("--traits-per-part", type=int, default=50)
+    ap.add_argument("--genetic-pcs", type=int, default=0,
+                    help="genetic PCs 1..N as extra covariates (default 0: Ning's model)")
     args = ap.parse_args(argv)
 
     fm = fmgwas()
     scan = Scan(Path(args.scan))
     genes = fm.read_genes(args.genes)[args.rank::args.world_size]
     out = Path(args.out)
+    pcs = scan.genetic_pcs(args.genetic_pcs)
+    log(f"covariates: age, sex" + (f", genetic PCs 1-{args.genetic_pcs}" if pcs is not None else ""))
     log(f"rank {args.rank}/{args.world_size}: {len(genes)} genes x {len(scan.catalog)} traits")
     start, ran = time.monotonic(), 0
     for number, gene in enumerate(genes, 1):
         t0 = time.monotonic()
-        parts = scan_gene(fm, scan, Path(args.cache), gene, out, args.traits_per_part)
+        parts = scan_gene(fm, scan, Path(args.cache), gene, out, args.traits_per_part, pcs)
         if parts:
             ran += 1
             eta = (time.monotonic() - start) / ran * (len(genes) - number)

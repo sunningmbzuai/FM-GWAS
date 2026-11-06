@@ -80,6 +80,26 @@ def group_fields(names: list[str], id_column: str) -> dict[str, list[Column]]:
     return groups
 
 
+# Genetic principal components (UKB 22009, or a separate "*genetic_pcs*" table
+# whose columns are pc1..pc40). Ancestry axes, not phenotypes: gene_scan.py
+# never tests them as traits; with --genetic-pcs it uses them as covariates.
+GENETIC_PC_TABLE = re.compile(r"genetic_pcs?\b|genetic_principal", re.I)
+GENETIC_PC_COLUMN = re.compile(r"^pc(\d+)$", re.I)
+
+
+def is_genetic_pc(trait_id: str) -> bool:
+    """True for a trait id ("<table stem>:<field>") naming a genetic PC."""
+    table, _, field = str(trait_id).rpartition(":")
+    return bool(GENETIC_PC_TABLE.search(table)) or field.split("-")[0] == "22009"
+
+
+def genetic_pc_number(trait_id: str) -> int | None:
+    """k of a "<...genetic_pcs>:pc<k>" trait id, else None."""
+    table, _, field = str(trait_id).rpartition(":")
+    match = GENETIC_PC_COLUMN.match(field)
+    return int(match.group(1)) if match and GENETIC_PC_TABLE.search(table) else None
+
+
 def is_excluded(field: str) -> bool:
     if not field.isdigit():
         return False

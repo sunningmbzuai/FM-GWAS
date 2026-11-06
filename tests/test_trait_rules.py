@@ -74,3 +74,14 @@ def test_find_id_column():
     assert R.find_id_column(["x", "eid"]) == "eid"
     assert R.find_id_column(["participant_id", "y"]) == "participant_id"
     assert R.find_id_column(["x"]) is None
+
+
+@pytest.mark.unit
+def test_genetic_pc_traits_are_recognised():
+    assert R.is_genetic_pc("ukb676772_genetic_pcs:pc5")
+    assert R.is_genetic_pc("ukb1234:22009")
+    assert not R.is_genetic_pc("ukb676772:30840")
+    assert not R.is_genetic_pc("Cholesterol")
+    assert R.genetic_pc_number("ukb676772_genetic_pcs:pc12") == 12
+    assert R.genetic_pc_number("ukb676772:pc12") is None
+    assert R.genetic_pc_number("ukb676772_genetic_pcs:sex") is None

@@ -20,6 +20,11 @@
 #   bash ning_nov03b.sh eta       # progress and time left of a running scan
 #   bash ning_nov03b.sh           # genes, traits, pca, scan, summary
 #
+# Sensitivity analysis (not in Ning's method): the same scan with genetic PCs
+# 1..GENETIC_PCS as extra covariates, to flag hits driven by ancestry.
+#   bash ning_nov03b.sh scan_gpc      # -> results_gpc10
+#   bash ning_nov03b.sh summary_gpc
+#
 # CPU host with the cluster paths (paths.env). Output under
 # UKBV_OUT_ROOT/gene_scan_1103. Every stage resumes.
 set -uo pipefail
@@ -37,6 +42,8 @@ RUN="${OUT_ROOT}/gene_scan_1103"
 SCAN_DIR="${RUN}/traits"
 CACHE_DIR="${RUN}/gene_pca"
 RESULTS="${RUN}/results"
+GENETIC_PCS=10
+RESULTS_GPC="${RUN}/results_gpc${GENETIC_PCS}"
 FEATURE_TABLE_ROOT="${OUT_ROOT}/feature_tables"
 COHORT_DIR="${OUT_ROOT}/cohorts_hpp1103_icd_selfrep"   # built by ning_nov03.sh
 SPARE_CORES=2
@@ -120,7 +127,9 @@ TRAITS_PER_PART=50
 n_untested() { [[ -f "${RUN}/genes_without_features.txt" ]] && grep -c . "${RUN}/genes_without_features.txt" || echo 0; }
 n_parts() { echo $(( ($(n_genes) - $(n_untested)) * ( ($(n_traits) + TRAITS_PER_PART - 1) / TRAITS_PER_PART ) )); }
 count_pca() { echo $(( $(find "$CACHE_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l) )); }
-count_scan() { echo $(( $(find "${RESULTS}/per_gene" -name 'part*.tsv.gz' 2>/dev/null | wc -l) )); }
+count_parts() { echo $(( $(find "$1/per_gene" -name 'part*.tsv.gz' 2>/dev/null | wc -l) )); }
+count_scan() { count_parts "$RESULTS"; }
+count_scan_gpc() { count_parts "$RESULTS_GPC"; }
 
 stage_genes() {
     [[ -f "$GENES" ]] || die "missing $GENES"
@@ -164,17 +173,38 @@ stage_scan() {
         --traits-per-part "$TRAITS_PER_PART"
 }
 
-stage_summary() {
-    "${PHENO_PY}" summarize_gene_scan.py --out "$RESULTS" \
-        --catalog "${SCAN_DIR}/trait_catalog.tsv" || die "summary failed"
+stage_scan_gpc() {
+    mkdir -p "$RUN"
+    log "scan_gpc: as scan, plus genetic PCs 1-${GENETIC_PCS} as covariates -> $RESULTS_GPC"
+    run_ranks "$SCAN_THREADS" scan_gpc "$(n_parts)" count_scan_gpc "${ASSOC_PY}" gene_scan.py \
+        --scan "$SCAN_DIR" --cache "$CACHE_DIR" --genes "$GENES" --out "$RESULTS_GPC" \
+        --traits-per-part "$TRAITS_PER_PART" --genetic-pcs "$GENETIC_PCS"
 }
+
+# Re-reading every part is the slow step; reuse the cell table when no part is
+# newer than it (the collapse and flags are rebuilt either way).
+summarize() {
+    local out="$1" table="$1/gene_trait_scan.tsv"
+    local -a reuse=()
+    if [[ -f "$table" ]] && [[ -z "$(find "$out/per_gene" -name 'part*.tsv.gz' -newer "$table" -print -quit)" ]]; then
+        log "summary: no part newer than $table, rebuilding from it"
+        reuse=(--from-summary)
+    fi
+    "${PHENO_PY}" summarize_gene_scan.py --out "$out" ${reuse[@]+"${reuse[@]}"} \
+        --catalog "${SCAN_DIR}/trait_catalog.tsv" || die "summary failed"
+    "${PHENO_PY}" top_hits.py "$out" || die "top_hits failed"
+}
+
+stage_summary() { summarize "$RESULTS"; }
+stage_summary_gpc() { summarize "$RESULTS_GPC"; }
 
 # Progress of whichever stage is running in another shell, from the files on
 # disk and the start marker run_ranks leaves (newest of scan/pca, else traits).
 stage_eta() {
     local marker name t0 done0 total
     # Newest marker first: a rerun's pca stage is not hidden by an old scan one.
-    for marker in $(ls -t "${RUN}/.scan_progress" "${RUN}/.pca_progress" 2>/dev/null); do
+    for marker in $(ls -t "${RUN}/.scan_gpc_progress" "${RUN}/.scan_progress" \
+                          "${RUN}/.pca_progress" 2>/dev/null); do
         name="$(basename "$marker" _progress)"; name="${name#.}"
         read -r t0 done0 total < "$marker"
         progress_line "$name" "$("count_$name")" "$total" "$done0" "$t0"
@@ -195,8 +225,11 @@ case "$STAGE" in
     pca)     stage_pca ;;
     scan)    stage_scan ;;
     summary) stage_summary ;;
+    scan_gpc)    stage_scan_gpc ;;
+    summary_gpc) stage_summary_gpc ;;
     eta)     stage_eta ;;
     all)     stage_genes; stage_traits; stage_pca; stage_scan; stage_summary ;;
-    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) die "unknown stage '$STAGE' (genes | traits | pca | scan | summary | eta | all)" ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) die "unknown stage '$STAGE' (genes | traits | pca | scan | summary | scan_gpc |" \
+           "summary_gpc | eta | all)" ;;
 esac
