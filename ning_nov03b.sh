@@ -116,7 +116,9 @@ n_genes() { echo $(( $(wc -l < "$GENES") - 1 )); }
 n_traits() { echo $(( $(wc -l < "${SCAN_DIR}/trait_catalog.tsv") - 1 )); }
 # gene_scan.py writes one part per gene and block of TRAITS_PER_PART traits.
 TRAITS_PER_PART=50
-n_parts() { echo $(( $(n_genes) * ( ($(n_traits) + TRAITS_PER_PART - 1) / TRAITS_PER_PART ) )); }
+# Genes without a feature table (stage_genes) are never scanned: not counted.
+n_untested() { [[ -f "${RUN}/genes_without_features.txt" ]] && grep -c . "${RUN}/genes_without_features.txt" || echo 0; }
+n_parts() { echo $(( ($(n_genes) - $(n_untested)) * ( ($(n_traits) + TRAITS_PER_PART - 1) / TRAITS_PER_PART ) )); }
 count_pca() { echo $(( $(find "$CACHE_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l) )); }
 count_scan() { echo $(( $(find "${RESULTS}/per_gene" -name 'part*.tsv.gz' 2>/dev/null | wc -l) )); }
 
