@@ -44,8 +44,9 @@ export PYTHONPATH="${COMPILED_WRAPPER_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 
 # The embedding script only embeds genes listed here. target_genes.py writes a
 # copy under target_gene_lists/ with the target genes the HPP list lacks; use
-# it when present, so UKB-only targets are not silently skipped.
-GENE_ANNOTATION="${OUT_ROOT}/target_gene_lists/candidate_genes.tsv"
+# it when present, so UKB-only targets are not silently skipped. A run with its
+# own target dir (UKBV_TARGET_GENE_DIR) points here with UKBV_GENE_ANNOTATION.
+GENE_ANNOTATION="${UKBV_GENE_ANNOTATION:-${OUT_ROOT}/target_gene_lists/candidate_genes.tsv}"
 [[ -f "$GENE_ANNOTATION" ]] || GENE_ANNOTATION="${HPP_UNION_GENE_DIR}/candidate_genes.tsv"
 GENE_SEQ_DIR="${OUT_ROOT}/gene_sequences"
 FEATURE_ROOT="${OUT_ROOT}/embeddings"

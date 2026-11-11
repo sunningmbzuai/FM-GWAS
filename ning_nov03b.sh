@@ -37,10 +37,14 @@ source "${HERE}/paths.sh"
 PHENO_PY="${CONDA_ROOT}/envs/microbiome/bin/python3"
 ASSOC_PY="${CONDA_ROOT}/envs/fmgwas_assoc/bin/python3"
 
-GENES="${HERE}/novel_genes_id_1103.tsv"
-EXPECTED_GENES=170
-RUN="${OUT_ROOT}/gene_scan_1103"
-SCAN_DIR="${RUN}/traits"
+# Another gene list can reuse this scan (ning_nov11.sh does): SCAN_* override
+# the list, the run directory, the trait catalog and the zip.
+GENES="${SCAN_GENES:-${HERE}/novel_genes_id_1103.tsv}"
+EXPECTED_GENES="${SCAN_EXPECTED_GENES:-170}"
+RUN="${SCAN_RUN:-${OUT_ROOT}/gene_scan_1103}"
+SCAN_DIR="${SCAN_TRAITS:-${RUN}/traits}"
+ZIP_NAME="${SCAN_ZIP:-ukbb_gene_scan_1103}"
+ZIP_TITLE="${SCAN_TITLE:-UKB scan: 170 genes (novel_genes_id_1103) x every UKB trait, All / F / M}"
 CACHE_DIR="${RUN}/gene_pca"
 RESULTS="${RUN}/results"
 GENETIC_PCS=10
@@ -199,11 +203,10 @@ summarize() {
 }
 
 stage_summary() {
-    summarize "$RESULTS" ukbb_gene_scan_1103 \
-        "UKB scan: 170 genes (novel_genes_id_1103) x every UKB trait, All / F / M"
+    summarize "$RESULTS" "$ZIP_NAME" "$ZIP_TITLE"
 }
 stage_summary_gpc() {
-    summarize "$RESULTS_GPC" "ukbb_gene_scan_1103_gpc${GENETIC_PCS}" \
+    summarize "$RESULTS_GPC" "${ZIP_NAME}_gpc${GENETIC_PCS}" \
         "UKB scan, sensitivity: + genetic PCs 1-${GENETIC_PCS} as covariates" "$GENETIC_PCS"
 }
 
